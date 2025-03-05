@@ -119,8 +119,8 @@ final class AppDelegate: NSObject {
         }
         
         // Check if app is active - remove the NSApp.isRunning check as it might be unreliable
-        guard NSApplication.shared != nil else {
-            Logger.warning("NSApplication.shared is nil, will retry later", log: Logger.app)
+        guard NSApp.windows.count > 0 else {
+            Logger.warning("NSApplication is not fully initialized, will retry later", log: Logger.app)
             // Schedule a retry after a short delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 self?.setupMenuBar()
@@ -163,12 +163,6 @@ final class AppDelegate: NSObject {
             showDemoItem.target = self
             menu.addItem(showDemoItem)
             
-            // Add specific trackpad demo for easier testing
-            let showTrackpadDemoItem = NSMenuItem(title: "Test Trackpad Visualization", action: #selector(menuShowTrackpadDemo), keyEquivalent: "t")
-            showTrackpadDemoItem.keyEquivalentModifierMask = [.command, .option]
-            showTrackpadDemoItem.target = self
-            menu.addItem(showTrackpadDemoItem)
-            
             // Add "Show Overlay" item that just makes the overlay visible briefly
             let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
             showOverlayItem.keyEquivalentModifierMask = [.command]
@@ -192,34 +186,10 @@ final class AppDelegate: NSObject {
             mouseItem.target = self
             inputTypesMenu.addItem(mouseItem)
             
-            // Add toggle for trackpad
-            let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "t")
-            trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
-            trackpadItem.target = self
-            inputTypesMenu.addItem(trackpadItem)
-            
             // Add the Input Types submenu
             let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
             inputTypesMenuItem.submenu = inputTypesMenu
             menu.addItem(inputTypesMenuItem)
-            
-            // Position Submenu
-            let positionMenu = NSMenu()
-            
-            // Add position options
-            for position in OverlayPosition.allCases {
-                let positionItem = NSMenuItem(title: position.rawValue, action: #selector(setOverlayPosition(_:)), keyEquivalent: "")
-                positionItem.tag = position.rawValue.hashValue
-                positionItem.target = self
-                let currentPosition = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
-                positionItem.state = (position.rawValue == currentPosition) ? .on : .off
-                positionMenu.addItem(positionItem)
-            }
-            
-            // Add the Position submenu
-            let positionMenuItem = NSMenuItem(title: "Overlay Position", action: nil, keyEquivalent: "")
-            positionMenuItem.submenu = positionMenu
-            menu.addItem(positionMenuItem)
             
             // Add preferences item
             let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ",")
@@ -263,11 +233,6 @@ final class AppDelegate: NSObject {
     
     @objc func menuShowPreferences() {
         NotificationCenter.default.post(name: NSNotification.Name("ShowPreferences"), object: nil)
-    }
-    
-    @objc func menuShowTrackpadDemo() {
-        // Post a notification that will be received by the ContentView
-        NotificationCenter.default.post(name: NSNotification.Name("ShowTrackpadDemo"), object: nil)
     }
     
     @objc func showAbout() {
@@ -324,42 +289,6 @@ final class AppDelegate: NSObject {
         NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
     }
     
-    @objc func toggleTrackpadInput() {
-        // Toggle trackpad input visibility
-        let current = UserDefaults.standard.bool(forKey: "showTrackpadInput")
-        UserDefaults.standard.set(!current, forKey: "showTrackpadInput")
-        
-        // Update the menu item state
-        if let menu = statusItem?.menu {
-            if let inputTypesItem = menu.items.first(where: { $0.title == "Input Types" }),
-               let submenu = inputTypesItem.submenu,
-               let trackpadItem = submenu.items.first(where: { $0.title == "Trackpad" }) {
-                trackpadItem.state = !current ? .on : .off
-            }
-        }
-        
-        // Notify of input type change
-        NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
-    }
-    
-    @objc func setOverlayPosition(_ sender: NSMenuItem) {
-        // Find the position based on the menu item tag
-        if let position = OverlayPosition.allCases.first(where: { $0.rawValue.hashValue == sender.tag }) {
-            // Save the position preference
-            UserDefaults.standard.set(position.rawValue, forKey: "overlayPosition")
-            
-            // Update all menu items in the position submenu
-            if let menu = sender.menu {
-                for item in menu.items {
-                    item.state = (item.tag == sender.tag) ? .on : .off
-                }
-            }
-            
-            // Update window position
-            NotificationCenter.default.post(name: NSNotification.Name("ReconfigureOverlayPosition"), object: nil)
-        }
-    }
-    
     func configureWindowAppearance() {
         if let window = NSApplication.shared.windows.first {
             // Make window float above other windows
@@ -373,40 +302,22 @@ final class AppDelegate: NSObject {
             // Ensure mouse events pass through the window
             window.ignoresMouseEvents = true
             
-            // Get the overlay position preference
-            let positionPreference = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
-            let position = OverlayPosition.allCases.first { $0.rawValue == positionPreference } ?? .bottomCenter
-            
-            // Position based on preference
+            // Position at bottom center (fixed position)
             if let screen = NSScreen.main {
                 let defaultWindowSize = CGSize(width: 650, height: 350)
                 
-                // Adjust size based on position
-                let sizeAdjustment = position.getSizeAdjustment()
-                let adjustedWindowSize = CGSize(
-                    width: defaultWindowSize.width * sizeAdjustment.width,
-                    height: defaultWindowSize.height * sizeAdjustment.height
+                // Calculate bottom center position
+                let origin = CGPoint(
+                    x: screen.frame.midX - defaultWindowSize.width / 2,
+                    y: screen.frame.minY + 120 // Fixed position from bottom
                 )
                 
-                // Get position based on preference
-                let origin = position.getPositionOrigin(for: screen, windowSize: adjustedWindowSize)
-                
                 // Set window frame
-                window.setFrame(CGRect(origin: origin, size: adjustedWindowSize), display: true)
+                window.setFrame(CGRect(origin: origin, size: defaultWindowSize), display: true)
                 
-                // Special styling for expanded notch
-                if position == .expandedNotch {
-                    // Apply special corner radius for notch appearance
-                    if let contentView = window.contentView?.superview {
-                        contentView.wantsLayer = true
-                        contentView.layer?.cornerRadius = 12
-                        contentView.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-                    }
-                } else {
-                    // Reset corner radius for other positions
-                    if let contentView = window.contentView?.superview {
-                        contentView.layer?.cornerRadius = 0
-                    }
+                // Reset corner radius
+                if let contentView = window.contentView?.superview {
+                    contentView.layer?.cornerRadius = 0
                 }
             }
             
@@ -431,7 +342,7 @@ final class AppDelegate: NSObject {
             window.isExcludedFromWindowsMenu = true
             window.animationBehavior = .none
             
-            Logger.debug("Window configured for transparent overlay", log: Logger.app)
+            Logger.debug("Window configured for transparent overlay at bottom center", log: Logger.app)
         } else {
             Logger.error("Could not find main window to configure", log: Logger.app)
         }
@@ -527,56 +438,6 @@ final class AppDelegate: NSObject {
     }
 }
 
-// Overlay position enum
-enum OverlayPosition: String, CaseIterable, Identifiable {
-    case bottomCenter = "Bottom Center"
-    case topCenter = "Top Center"
-    case expandedNotch = "Expanded Notch" // New option for notch MacBooks
-    
-    var id: String { self.rawValue }
-    
-    // Return CGPoint for positioning based on screen size
-    func getPositionOrigin(for screen: NSScreen, windowSize: CGSize) -> CGPoint {
-        let screenRect = screen.frame
-        
-        switch self {
-        case .bottomCenter:
-            return CGPoint(
-                x: screenRect.midX - windowSize.width / 2,
-                y: screenRect.minY + 120 // Slightly higher from bottom
-            )
-        case .topCenter:
-            return CGPoint(
-                x: screenRect.midX - windowSize.width / 2,
-                y: screenRect.maxY - windowSize.height - 20 // Slightly below top
-            )
-        case .expandedNotch:
-            // Calculate position to align with notch on MacBooks with notch
-            // Notch is usually centered at the top
-            let notchWidth: CGFloat = 200 // Approximate notch width
-            let expandedWidth = notchWidth * 2 // Wider than notch for better aesthetic
-            
-            // Make it narrower for this special position
-            let adjustedWindowSize = CGSize(width: min(windowSize.width, expandedWidth), height: windowSize.height * 0.7)
-            
-            return CGPoint(
-                x: screenRect.midX - adjustedWindowSize.width / 2,
-                y: screenRect.maxY - adjustedWindowSize.height - 5 // Very close to top
-            )
-        }
-    }
-    
-    // Get window size adjustment factor for special positions
-    func getSizeAdjustment() -> CGSize {
-        switch self {
-        case .expandedNotch:
-            return CGSize(width: 0.4, height: 0.7) // 40% width, 70% height for notch
-        default:
-            return CGSize(width: 1.0, height: 1.0) // Default size
-        }
-    }
-}
-
 // Extension to check if the app is running
 extension NSApplication {
     var isRunning: Bool {
@@ -629,10 +490,6 @@ struct KlicApp: App {
                     // Show demo inputs when requested from menu
                     inputManager.showDemoInputs()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowTrackpadDemo"))) { _ in
-                    // Show trackpad-specific demo
-                    inputManager.showTrackpadDemo()
-                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -676,112 +533,5 @@ struct KlicApp: App {
     
     private func showOverlayFromMenu() {
         appDelegate?.showOverlayFromMenu()
-    }
-}
-
-extension InputManager {
-    // Show trackpad-specific demo
-    func showTrackpadDemo() {
-        Logger.debug("Showing trackpad-specific demo", log: Logger.app)
-        
-        // Clear existing events
-        self.trackpadEvents = []
-        
-        // Get current timestamp
-        let now = Date()
-        
-        // Create demo trackpad gestures
-        
-        // 1. Pinch gesture
-        let touch1Pinch = FingerTouch(id: 1001, position: CGPoint(x: 0.3, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: now)
-        let touch2Pinch = FingerTouch(id: 1002, position: CGPoint(x: 0.7, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: now)
-        
-        let pinchGesture = TrackpadGesture(
-            type: .pinch,
-            touches: [touch1Pinch, touch2Pinch],
-            magnitude: 0.8,
-            rotation: nil,
-            isMomentumScroll: false
-        )
-        
-        // Add the pinch gesture event
-        let pinchEvent = InputEvent(
-            id: UUID(),
-            timestamp: now,
-            type: .trackpadGesture,
-            keyboardEvent: nil,
-            mouseEvent: nil,
-            trackpadGesture: pinchGesture,
-            trackpadTouches: [touch1Pinch, touch2Pinch]
-        )
-        
-        // Show the gesture
-        self.trackpadEvents = [pinchEvent]
-        self.updateActiveInputTypes(adding: .trackpad)
-        self.updateAllEvents()
-        self.showOverlay()
-        
-        // After a delay, show a swipe gesture
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            // 2. Three-finger swipe
-            let touch1Swipe = FingerTouch(id: 2001, position: CGPoint(x: 0.3, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
-            let touch2Swipe = FingerTouch(id: 2002, position: CGPoint(x: 0.5, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: Date())
-            let touch3Swipe = FingerTouch(id: 2003, position: CGPoint(x: 0.7, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .ring, timestamp: Date())
-            
-            let swipeGesture = TrackpadGesture(
-                type: .multiFingerSwipe(direction: .right, fingerCount: 3),
-                touches: [touch1Swipe, touch2Swipe, touch3Swipe],
-                magnitude: 1.0,
-                rotation: nil,
-                isMomentumScroll: false
-            )
-            
-            // Add the swipe gesture event
-            let swipeEvent = InputEvent(
-                id: UUID(),
-                timestamp: Date(),
-                type: .trackpadGesture,
-                keyboardEvent: nil,
-                mouseEvent: nil,
-                trackpadGesture: swipeGesture,
-                trackpadTouches: [touch1Swipe, touch2Swipe, touch3Swipe]
-            )
-            
-            // Show the gesture
-            self.trackpadEvents = [swipeEvent]
-            self.updateAllEvents()
-            self.showOverlay()
-        }
-        
-        // After another delay, show a rotation gesture
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            // 3. Rotation gesture
-            let touch1Rotate = FingerTouch(id: 3001, position: CGPoint(x: 0.4, y: 0.6), pressure: 0.6, majorRadius: 10, minorRadius: 10, fingerType: .thumb, timestamp: Date())
-            let touch2Rotate = FingerTouch(id: 3002, position: CGPoint(x: 0.6, y: 0.4), pressure: 0.6, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
-            
-            let rotateGesture = TrackpadGesture(
-                type: .rotate,
-                touches: [touch1Rotate, touch2Rotate],
-                magnitude: 0.9,
-                rotation: 45.0,
-                isMomentumScroll: false
-            )
-            
-            // Add the rotate gesture event
-            let rotateEvent = InputEvent(
-                id: UUID(),
-                timestamp: Date(),
-                type: .trackpadGesture,
-                keyboardEvent: nil,
-                mouseEvent: nil,
-                trackpadGesture: rotateGesture,
-                trackpadTouches: [touch1Rotate, touch2Rotate]
-            )
-            
-            // Show the gesture
-            self.trackpadEvents = [rotateEvent]
-            self.updateAllEvents()
-            self.showOverlay()
-        }
     }
 }

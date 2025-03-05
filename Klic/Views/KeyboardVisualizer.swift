@@ -490,23 +490,27 @@ struct KeyCapsuleView: View {
 
 #Preview {
     // Create a few key events for previewing
+    let commandEvent = KeyboardEvent(
+        key: "⌘",
+        keyCode: 55,
+        isDown: true,
+        modifiers: [.command],
+        characters: nil,
+        isRepeat: false
+    )
+    
+    let rEvent = KeyboardEvent(
+        key: "R",
+        keyCode: 15,
+        isDown: true,
+        modifiers: [.command],
+        characters: "r",
+        isRepeat: false
+    )
+    
     let events = [
-        InputEvent.keyboardEvent(
-            key: "⌘",
-            keyCode: 55,
-            isDown: true,
-            modifiers: [.command],
-            characters: nil,
-            isRepeat: false
-        ),
-        InputEvent.keyboardEvent(
-            key: "R",
-            keyCode: 15,
-            isDown: true,
-            modifiers: [.command],
-            characters: "r",
-            isRepeat: false
-        )
+        InputEvent.keyboardEvent(event: commandEvent),
+        InputEvent.keyboardEvent(event: rEvent)
     ]
     
     return KeyboardVisualizer(events: events)

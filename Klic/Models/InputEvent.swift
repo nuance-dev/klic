@@ -9,38 +9,6 @@ enum InputEventType {
     case mouseDown
     case mouseUp
     case mouseScroll
-    case trackpadTouch
-    case trackpadRelease
-    case trackpadGesture
-}
-
-/// Represents a finger touch on the trackpad
-struct FingerTouch: Hashable, Equatable {
-    let id: Int
-    var position: CGPoint
-    var pressure: CGFloat
-    var majorRadius: CGFloat
-    var minorRadius: CGFloat
-    var fingerType: FingerType
-    var timestamp: Date?
-    
-    enum FingerType: String {
-        case thumb
-        case index
-        case middle
-        case ring
-        case pinky
-        case unknown
-    }
-    
-    // Hashable conformance
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: FingerTouch, rhs: FingerTouch) -> Bool {
-        return lhs.id == rhs.id
-    }
 }
 
 /// Represents a mouse button
@@ -86,39 +54,6 @@ struct KeyboardEvent: Equatable {
     }
 }
 
-/// Represents a trackpad gesture
-struct TrackpadGesture: Equatable {
-    let type: GestureType
-    let touches: [FingerTouch]
-    let magnitude: CGFloat
-    let rotation: CGFloat?
-    let isMomentumScroll: Bool
-    
-    init(type: GestureType, touches: [FingerTouch], magnitude: CGFloat, rotation: CGFloat?, isMomentumScroll: Bool = false) {
-        self.type = type
-        self.touches = touches
-        self.magnitude = magnitude
-        self.rotation = rotation
-        self.isMomentumScroll = isMomentumScroll
-    }
-    
-    enum GestureType: Equatable {
-        case pinch
-        case rotate
-        case swipe(direction: SwipeDirection)
-        case multiFingerSwipe(direction: SwipeDirection, fingerCount: Int)
-        case tap(count: Int)
-        case scroll(fingerCount: Int, deltaX: CGFloat, deltaY: CGFloat)
-        
-        enum SwipeDirection: String {
-            case up
-            case down
-            case left
-            case right
-        }
-    }
-}
-
 /// The main input event model that encapsulates all types of input events
 struct InputEvent: Identifiable, Equatable {
     let id: UUID
@@ -128,74 +63,32 @@ struct InputEvent: Identifiable, Equatable {
     // Event-specific data
     let keyboardEvent: KeyboardEvent?
     let mouseEvent: MouseEvent?
-    let trackpadGesture: TrackpadGesture?
-    let trackpadTouches: [FingerTouch]?
     
-    // MARK: - Event Types
-    
-    enum EventType: String {
+    enum EventType {
         case keyboard
         case mouse
-        case trackpadGesture
-        case trackpadTouch
     }
     
-    // MARK: - Factory Methods
-    
-    static func keyboardEvent(key: String, keyCode: Int, isDown: Bool, modifiers: [KeyModifier], characters: String? = nil, isRepeat: Bool = false) -> InputEvent {
-        let event = KeyboardEvent(key: key, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
+    // Factory method for keyboard events
+    static func keyboardEvent(event: KeyboardEvent) -> InputEvent {
         return InputEvent(
             id: UUID(),
             timestamp: Date(),
             type: .keyboard,
             keyboardEvent: event,
-            mouseEvent: nil,
-            trackpadGesture: nil,
-            trackpadTouches: nil
+            mouseEvent: nil
         )
     }
     
-    static func mouseEvent(type: InputEventType, position: CGPoint, button: MouseButton? = nil, scrollDelta: CGPoint? = nil, isDown: Bool = false, isDoubleClick: Bool = false, isMomentumScroll: Bool = false) -> InputEvent {
-        let event = MouseEvent(position: position, button: button, scrollDelta: scrollDelta, isDown: isDown, isDoubleClick: isDoubleClick, isMomentumScroll: isMomentumScroll)
+    // Factory method for mouse events
+    static func mouseEvent(event: MouseEvent) -> InputEvent {
         return InputEvent(
             id: UUID(),
             timestamp: Date(),
             type: .mouse,
             keyboardEvent: nil,
-            mouseEvent: event,
-            trackpadGesture: nil,
-            trackpadTouches: nil
+            mouseEvent: event
         )
-    }
-    
-    static func trackpadGestureEvent(gesture: TrackpadGesture) -> InputEvent {
-        return InputEvent(
-            id: UUID(),
-            timestamp: Date(),
-            type: .trackpadGesture,
-            keyboardEvent: nil,
-            mouseEvent: nil,
-            trackpadGesture: gesture,
-            trackpadTouches: nil
-        )
-    }
-    
-    static func trackpadTouchEvent(touches: [FingerTouch]) -> InputEvent {
-        return InputEvent(
-            id: UUID(),
-            timestamp: Date(),
-            type: .trackpadTouch,
-            keyboardEvent: nil,
-            mouseEvent: nil,
-            trackpadGesture: nil,
-            trackpadTouches: touches
-        )
-    }
-    
-    // MARK: - Equatable
-    
-    static func == (lhs: InputEvent, rhs: InputEvent) -> Bool {
-        return lhs.id == rhs.id
     }
 }
 

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct InputOverlayView: View {
     @ObservedObject var inputManager: InputManager
-    @EnvironmentObject var trackpadMonitor: TrackpadMonitor
     
     // Design constants
     private let containerRadius: CGFloat = 24 // Slightly larger for more premium feel
@@ -16,11 +15,6 @@ struct InputOverlayView: View {
     // Computed properties to determine what should be shown
     private var shouldShowKeyboard: Bool {
         inputManager.activeInputTypes.contains(.keyboard) && !inputManager.keyboardEvents.isEmpty
-    }
-    
-    private var shouldShowTrackpad: Bool {
-        inputManager.activeInputTypes.contains(.trackpad) && 
-        (!inputManager.trackpadEvents.isEmpty || !trackpadMonitor.rawTouches.isEmpty)
     }
     
     private var shouldShowMouse: Bool {
@@ -37,7 +31,7 @@ struct InputOverlayView: View {
             Spacer()
             
             // Only show container when there are active inputs to display
-            if shouldShowKeyboard || shouldShowTrackpad || shouldShowMouse {
+            if shouldShowKeyboard || shouldShowMouse {
                 HStack(spacing: overlaySpacing) {
                     // Individual visualizers will only show up when needed
                     
@@ -49,22 +43,10 @@ struct InputOverlayView: View {
                             .id("keyboard-\(inputManager.keyboardEvents.count)")
                     }
                     
-                    // Trackpad visualizer with improved look
-                    if shouldShowTrackpad {
-                        TrackpadVisualizer(
-                            events: inputManager.trackpadEvents,
-                            trackpadSize: CGSize(width: 100, height: 72),
-                            trackpadMonitor: trackpadMonitor
-                        )
-                        .frame(width: 100, height: 72)
-                        .transition(createInsertionTransition())
-                        .id("trackpad-\(inputManager.trackpadEvents.count + trackpadMonitor.rawTouches.count)")
-                    }
-                    
                     // Mouse visualizer
                     if shouldShowMouse {
                         MouseVisualizer(events: inputManager.mouseEvents)
-                            .frame(width: 100, height: 72)
+                            .frame(width: 100, height: 65)
                             .transition(createInsertionTransition())
                             .id("mouse-\(inputManager.mouseEvents.count)")
                     }
@@ -72,96 +54,33 @@ struct InputOverlayView: View {
                 .padding(containerPadding)
                 .background(
                     ZStack {
-                        // Modern glass blur effect - use .hudWindow material for better macOS 15.2 support
-                        BlurEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                            .cornerRadius(containerRadius)
-                        
-                        // Premium dark background with subtle gradient
+                        // Premium glass effect
                         RoundedRectangle(cornerRadius: containerRadius)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color(.sRGB, red: 0.11, green: 0.11, blue: 0.13, opacity: 0.70),
-                                        Color(.sRGB, red: 0.07, green: 0.07, blue: 0.09, opacity: 0.70)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.9)
                         
-                        // Subtle inner glow at the top
+                        // Subtle inner glow
                         RoundedRectangle(cornerRadius: containerRadius)
-                            .trim(from: 0, to: 0.5)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.2),
-                                        Color.white.opacity(0.05),
-                                        Color.white.opacity(0.0)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottom
-                                ),
-                                lineWidth: 1
-                            )
-                            .padding(0.5)
-                            .blendMode(.plusLighter)
-                        
-                        // Subtle border
-                        RoundedRectangle(cornerRadius: containerRadius)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.15),
-                                        Color.white.opacity(0.07),
-                                        Color.white.opacity(0.03)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.5
-                            )
+                            .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
                     }
                 )
-                .compositingGroup()
-                .shadow(
-                    color: Color.black.opacity(0.25),
-                    radius: 15,
-                    x: 0,
-                    y: 4
-                )
-                .scaleEffect(isAppearing ? 1.0 : 0.95)
-                .opacity(isAppearing ? inputManager.overlayOpacity : 0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: inputManager.activeInputTypes)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isAppearing)
-                .padding(.bottom, 24)
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .move(edge: .bottom)),
-                    removal: .opacity.animation(.easeOut(duration: 0.2))
-                ))
+                .cornerRadius(containerRadius)
+                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 5)
+                .opacity(inputManager.overlayOpacity)
+                .transition(.opacity)
             }
+            
+            Spacer().frame(height: 30)
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: shouldShowKeyboard)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: shouldShowTrackpad)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: shouldShowMouse)
-        .onAppear {
-            // Trigger appearance animation
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                isAppearing = true
-            }
-        }
-        .onDisappear {
-            isAppearing = false
-        }
+        .edgesIgnoringSafeArea(.all)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    // Helper function to create consistent insertion transitions
+    // Create a more elegant insertion transition
     private func createInsertionTransition() -> AnyTransition {
-        .asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: 0.92, anchor: .center))
-                .animation(.spring(response: 0.3, dampingFraction: 0.7)),
-            removal: .opacity.animation(.easeOut(duration: 0.2))
-        )
+        let insertion = AnyTransition.scale(scale: 0.95)
+            .combined(with: .opacity)
+        return insertion
     }
 }
 
@@ -197,7 +116,7 @@ struct BlurEffectView: NSViewRepresentable {
 
 #Preview {
     let inputManager = InputManager()
-    inputManager.activeInputTypes = [.keyboard, .trackpad]
+    inputManager.activeInputTypes = [.keyboard, .mouse]
     return InputOverlayView(inputManager: inputManager)
         .environmentObject(inputManager)
 } 

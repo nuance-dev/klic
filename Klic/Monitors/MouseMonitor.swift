@@ -144,13 +144,15 @@ class MouseMonitor: ObservableObject {
             let isDoubleClick = timestamp.timeIntervalSince(lastClickTime) < doubleClickThreshold
             lastClickTime = timestamp
             
-            let inputEvent = InputEvent.mouseEvent(
-                type: .mouseDown,
+            let mouseEvent = MouseEvent(
                 position: location,
                 button: .left,
+                scrollDelta: nil,
                 isDown: true,
-                isDoubleClick: isDoubleClick
+                isDoubleClick: isDoubleClick,
+                isMomentumScroll: false
             )
+            let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
             DispatchQueue.main.async {
                 // Remove any existing left mouse down events to avoid duplicates
                 self.currentEvents.removeAll { $0.mouseEvent?.button == .left && $0.type == .mouse }
@@ -161,12 +163,15 @@ class MouseMonitor: ObservableObject {
         case .leftMouseUp:
             isLeftMouseDown = false
             
-            let inputEvent = InputEvent.mouseEvent(
-                type: .mouseUp,
+            let mouseEvent = MouseEvent(
                 position: location,
                 button: .left,
-                isDown: false
+                scrollDelta: nil,
+                isDown: false,
+                isDoubleClick: false,
+                isMomentumScroll: false
             )
+            let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
             DispatchQueue.main.async {
                 // Remove any existing left mouse up events to avoid duplicates
                 self.currentEvents.removeAll { $0.mouseEvent?.button == .left && $0.type == .mouse }
@@ -177,12 +182,15 @@ class MouseMonitor: ObservableObject {
         case .rightMouseDown:
             isRightMouseDown = true
             
-            let inputEvent = InputEvent.mouseEvent(
-                type: .mouseDown,
+            let mouseEvent = MouseEvent(
                 position: location,
                 button: .right,
-                isDown: true
+                scrollDelta: nil,
+                isDown: true,
+                isDoubleClick: false,
+                isMomentumScroll: false
             )
+            let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
             DispatchQueue.main.async {
                 // Remove any existing right mouse down events to avoid duplicates
                 self.currentEvents.removeAll { $0.mouseEvent?.button == .right && $0.type == .mouse }
@@ -193,12 +201,15 @@ class MouseMonitor: ObservableObject {
         case .rightMouseUp:
             isRightMouseDown = false
             
-            let inputEvent = InputEvent.mouseEvent(
-                type: .mouseUp,
+            let mouseEvent = MouseEvent(
                 position: location,
                 button: .right,
-                isDown: false
+                scrollDelta: nil,
+                isDown: false,
+                isDoubleClick: false,
+                isMomentumScroll: false
             )
+            let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
             DispatchQueue.main.async {
                 // Remove any existing right mouse up events to avoid duplicates
                 self.currentEvents.removeAll { $0.mouseEvent?.button == .right && $0.type == .mouse }
@@ -212,36 +223,46 @@ class MouseMonitor: ObservableObject {
             
             // Button 2 is typically middle button
             if buttonNumber == 2 {
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseDown,
+                let mouseEvent = MouseEvent(
                     position: location,
                     button: .middle,
-                    isDown: true
+                    scrollDelta: nil,
+                    isDown: true,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 DispatchQueue.main.async {
+                    // Remove any existing middle mouse events to avoid duplicates
                     self.currentEvents.removeAll { $0.mouseEvent?.button == .middle && $0.type == .mouse }
                     self.currentEvents.append(inputEvent)
                 }
                 Logger.debug("Middle mouse down at \(location)", log: Logger.mouse)
             } else if buttonNumber == 3 {
                 // Extra button 1 (often back button)
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseDown,
+                let mouseEvent = MouseEvent(
                     position: location,
                     button: .extra1,
-                    isDown: true
+                    scrollDelta: nil,
+                    isDown: true,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 DispatchQueue.main.async {
                     self.currentEvents.append(inputEvent)
                 }
             } else if buttonNumber == 4 {
                 // Extra button 2 (often forward button)
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseDown,
+                let mouseEvent = MouseEvent(
                     position: location,
                     button: .extra2,
-                    isDown: true
+                    scrollDelta: nil,
+                    isDown: true,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 DispatchQueue.main.async {
                     self.currentEvents.append(inputEvent)
                 }
@@ -252,12 +273,15 @@ class MouseMonitor: ObservableObject {
             let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
             
             if buttonNumber == 2 {
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseUp,
+                let mouseEvent = MouseEvent(
                     position: location,
                     button: .middle,
-                    isDown: false
+                    scrollDelta: nil,
+                    isDown: false,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 DispatchQueue.main.async {
                     self.currentEvents.removeAll { $0.mouseEvent?.button == .middle && $0.type == .mouse }
                     self.currentEvents.append(inputEvent)
@@ -266,12 +290,15 @@ class MouseMonitor: ObservableObject {
             } else if buttonNumber == 3 || buttonNumber == 4 {
                 // Extra buttons up events
                 let button: MouseButton = buttonNumber == 3 ? .extra1 : .extra2
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseUp,
+                let mouseEvent = MouseEvent(
                     position: location,
                     button: button,
-                    isDown: false
+                    scrollDelta: nil,
+                    isDown: false,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 DispatchQueue.main.async {
                     self.currentEvents.append(inputEvent)
                 }
@@ -298,11 +325,15 @@ class MouseMonitor: ObservableObject {
                 let speed = CGFloat(distance / max(0.001, timeDiff))
                 
                 // Create movement event
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseMove,
+                let mouseEvent = MouseEvent(
                     position: location,
-                    isDown: false
+                    button: nil,
+                    scrollDelta: nil,
+                    isDown: false,
+                    isDoubleClick: false,
+                    isMomentumScroll: false
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 
                 DispatchQueue.main.async {
                     // Remove any existing mouse movement events to distinguish from clicks
@@ -336,12 +367,15 @@ class MouseMonitor: ObservableObject {
             
             // Ignore momentum scrolling - only show actual user scroll actions
             if (abs(deltaY) > 0.1 || abs(deltaX) > 0.1) && !isMomentum {
-                let inputEvent = InputEvent.mouseEvent(
-                    type: .mouseScroll,
+                let mouseEvent = MouseEvent(
                     position: location,
+                    button: nil,
                     scrollDelta: CGPoint(x: deltaX, y: deltaY),
+                    isDown: false,
+                    isDoubleClick: false,
                     isMomentumScroll: false // Never show momentum scrolling
                 )
+                let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 
                 DispatchQueue.main.async {
                     self.currentEvents.append(inputEvent)

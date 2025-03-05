@@ -551,13 +551,15 @@ struct MouseMoveView: View {
 
 #Preview {
     // Create test mouse events
-    let clickEvent = InputEvent.mouseEvent(
-        type: .mouseDown,
+    let mouseEvent = MouseEvent(
         position: CGPoint(x: 0.5, y: 0.5),
         button: .left,
         scrollDelta: nil,
-        isDown: true
+        isDown: true,
+        isDoubleClick: false,
+        isMomentumScroll: false
     )
+    let clickEvent = InputEvent.mouseEvent(event: mouseEvent)
     
     ZStack {
         Color.black

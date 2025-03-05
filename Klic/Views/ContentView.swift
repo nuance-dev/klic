@@ -26,18 +26,12 @@ struct ContentView: View {
                     MouseVisualizer(events: inputManager.mouseEvents)
                         .padding(.horizontal, isMinimalMode ? 8 : 16)
                 }
-                
-                // Trackpad visualizer
-                if !inputManager.trackpadEvents.isEmpty {
-                    TrackpadVisualizer(events: inputManager.trackpadEvents)
-                        .padding(.horizontal, isMinimalMode ? 8 : 16)
-                }
             }
             .padding(.vertical, 16)
         }
         .onAppear {
             // Start monitoring inputs
-            inputManager.startAllMonitors()
+            inputManager.startMonitoring()
             
             // Load user preferences
             isMinimalMode = UserDefaults.standard.bool(forKey: "minimalMode")

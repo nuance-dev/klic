@@ -7,15 +7,13 @@ enum Logger {
     static let app = OSLog(subsystem: "com.klic.app", category: "Application")
     static let keyboard = OSLog(subsystem: "com.klic.app", category: "Keyboard")
     static let mouse = OSLog(subsystem: "com.klic.app", category: "Mouse")
-    static let trackpad = OSLog(subsystem: "com.klic.app", category: "Trackpad")
     static let overlay = OSLog(subsystem: "com.klic.app", category: "Overlay")
     
-    // Set log levels - set trackpad to .debug for verbose logging
+    // Set log levels
     private static var logLevels: [OSLog: OSLogType] = [
         app: .info,
         keyboard: .info,
         mouse: .info,
-        trackpad: .debug, // Set to .debug to see all trackpad events
         overlay: .info
     ]
     
@@ -46,7 +44,7 @@ enum Logger {
 }
 
 // Extension to make testing for log level easier
-extension OSLogType: Equatable {
+extension OSLogType: @retroactive Equatable {
     public static func == (lhs: OSLogType, rhs: OSLogType) -> Bool {
         return lhs.rawValue == rhs.rawValue
     }

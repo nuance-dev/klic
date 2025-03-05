@@ -212,7 +212,15 @@ class KeyboardMonitor: ObservableObject {
             addToRecentEvents(keyCode: keyCode, modifiers: modifiers, isDown: isDown, timestamp: currentTime)
             
             // Create the input event
-            let inputEvent = InputEvent.keyboardEvent(key: characters, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
+            let keyboardEvent = KeyboardEvent(
+                key: characters,
+                keyCode: keyCode,
+                isDown: isDown,
+                modifiers: modifiers,
+                characters: characters,
+                isRepeat: isRepeat
+            )
+            let inputEvent = InputEvent.keyboardEvent(event: keyboardEvent)
             
             Logger.debug("Keyboard event: \(isDown ? "down" : "up") key=\(characters) keyCode=\(keyCode) modifiers=\(modifiers)", log: Logger.keyboard)
             
@@ -266,7 +274,15 @@ class KeyboardMonitor: ObservableObject {
     
     private func sendTestEvent() {
         // Create a synthetic test event
-        let testEvent = InputEvent.keyboardEvent(key: "Test", keyCode: 0, isDown: true, modifiers: [], characters: "Test", isRepeat: false)
+        let keyboardEvent = KeyboardEvent(
+            key: "Test", 
+            keyCode: 0, 
+            isDown: true, 
+            modifiers: [], 
+            characters: "Test", 
+            isRepeat: false
+        )
+        let testEvent = InputEvent.keyboardEvent(event: keyboardEvent)
         
         // Log that we're sending a test event
         Logger.debug("Sending keyboard test event", log: Logger.keyboard)
