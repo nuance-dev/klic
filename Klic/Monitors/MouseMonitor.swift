@@ -136,6 +136,26 @@ class MouseMonitor: ObservableObject {
         let timestamp = Date()
         let location = NSEvent.mouseLocation
         
+        // Try to detect trackpad scroll events (which often come through here as scroll wheel events)
+        if type == .scrollWheel {
+            // Check if this is likely a trackpad event
+            if let nsEvent = NSEvent(cgEvent: event) {
+                // Trackpad events usually have phase information or precise scrolling deltas
+                if nsEvent.phase != [] || nsEvent.momentumPhase != [] {
+                    // This is likely a trackpad event - ignore it
+                    Logger.debug("Ignoring trackpad scroll event", log: Logger.mouse)
+                    return
+                }
+                
+                // Check for precise scrolling which is usually trackpad
+                if nsEvent.hasPreciseScrollingDeltas {
+                    // This is likely a trackpad event - ignore it
+                    Logger.debug("Ignoring precise delta scroll event (likely trackpad)", log: Logger.mouse)
+                    return
+                }
+            }
+        }
+        
         switch type {
         case .leftMouseDown:
             isLeftMouseDown = true
@@ -329,6 +349,15 @@ class MouseMonitor: ObservableObject {
         case .scrollWheel:
             let deltaY = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
             let deltaX = event.getDoubleValueField(.scrollWheelEventDeltaAxis2)
+            
+            // Additional check for trackpad-like events
+            if let nsEvent = NSEvent(cgEvent: event) {
+                if nsEvent.hasPreciseScrollingDeltas || nsEvent.phase != [] || nsEvent.momentumPhase != [] {
+                    // Likely a trackpad event - ignore
+                    Logger.debug("Ignoring trackpad-like scroll event in scrollWheel handler", log: Logger.mouse)
+                    return
+                }
+            }
             
             // Check if this is a momentum scroll event
             let phase = event.getIntegerValueField(.scrollWheelEventMomentumPhase)
