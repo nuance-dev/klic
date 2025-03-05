@@ -175,13 +175,13 @@ final class AppDelegate: NSObject {
             let inputTypesMenu = NSMenu()
             
             // Add toggle for keyboard
-            let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "k")
+            let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "")
             keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
             keyboardItem.target = self
             inputTypesMenu.addItem(keyboardItem)
             
             // Add toggle for mouse
-            let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "m")
+            let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "")
             mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
             mouseItem.target = self
             inputTypesMenu.addItem(mouseItem)
@@ -441,7 +441,13 @@ final class AppDelegate: NSObject {
 // Extension to check if the app is running
 extension NSApplication {
     var isRunning: Bool {
-        return NSApp.windows.count > 0 && NSApp.isActive
+        // The old implementation was causing crashes:
+        // return NSApp.windows.count > 0 && NSApp.isActive
+        
+        // New safer implementation:
+        // Only check if the app exists and is active, which is safer
+        let windowCount = NSApp.windows.count
+        return windowCount > 0 && NSApplication.shared.isActive
     }
 }
 

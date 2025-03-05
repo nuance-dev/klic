@@ -12,6 +12,10 @@ class InputManager: ObservableObject {
     @Published var overlayOpacity: Double = 0.0
     @Published var activeInputTypes: Set<InputType> = []
     
+    // Add publishing of input visibility preferences  
+    @Published var showKeyboardInput: Bool = true
+    @Published var showMouseInput: Bool = true
+    
     // Maximum events to keep per input type
     private let maxKeyboardEvents = 6
     private let maxMouseEvents = 3
@@ -44,7 +48,37 @@ class InputManager: ObservableObject {
     
     init() {
         Logger.info("Initializing InputManager", log: Logger.app)
+        
+        // Initialize visibility preferences from user defaults
+        self.showKeyboardInput = UserPreferences.getShowKeyboardInput()
+        self.showMouseInput = UserPreferences.getShowMouseInput()
+        
         setupSubscriptions()
+        
+        // Listen for input type changes
+        NotificationCenter.default.addObserver(
+            forName: .InputTypesChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Update visibility settings from user defaults
+            self.showKeyboardInput = UserPreferences.getShowKeyboardInput()
+            self.showMouseInput = UserPreferences.getShowMouseInput()
+            
+            // Clear events for disabled input types
+            if !self.showKeyboardInput {
+                self.keyboardEvents = []
+                self.updateActiveInputTypes(adding: .keyboard, removing: true)
+            }
+            
+            if !self.showMouseInput {
+                self.mouseEvents = []
+                self.updateActiveInputTypes(adding: .mouse, removing: true)
+            }
+            
+            self.updateAllEvents()
+        }
     }
     
     private func setupSubscriptions() {
@@ -54,7 +88,9 @@ class InputManager: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] events in
                 guard let self = self else { return }
-                if !events.isEmpty {
+                
+                // Only process keyboard events if keyboard input is enabled
+                if self.showKeyboardInput && !events.isEmpty {
                     // Filter repeat events when typing fast to avoid clutter
                     let filteredEvents = self.filterRepeatKeyEvents(events)
                     
@@ -70,6 +106,11 @@ class InputManager: ObservableObject {
                     self.scheduleClearEventTimer(for: .keyboard)
                     
                     Logger.debug("Received \(events.count) keyboard events", log: Logger.app)
+                } else if !self.showKeyboardInput && !self.keyboardEvents.isEmpty {
+                    // Clear keyboard events if keyboard input is disabled
+                    self.keyboardEvents = []
+                    self.updateActiveInputTypes(adding: .keyboard, removing: true)
+                    self.updateAllEvents()
                 }
             }
             .store(in: &cancellables)
@@ -80,7 +121,7 @@ class InputManager: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] events in
                 guard let self = self else { return }
-                if !events.isEmpty {
+                if self.showMouseInput && !events.isEmpty {
                     self.mouseEvents = Array(events.prefix(self.maxMouseEvents))
                     self.updateActiveInputTypes(adding: .mouse, removing: events.isEmpty)
                     self.updateAllEvents()
@@ -90,6 +131,11 @@ class InputManager: ObservableObject {
                     self.scheduleClearEventTimer(for: .mouse)
                     
                     Logger.debug("Received \(events.count) mouse events", log: Logger.app)
+                } else if !self.showMouseInput && !self.mouseEvents.isEmpty {
+                    // Clear mouse events if mouse input is disabled
+                    self.mouseEvents = []
+                    self.updateActiveInputTypes(adding: .mouse, removing: true)
+                    self.updateAllEvents()
                 }
             }
             .store(in: &cancellables)
@@ -342,6 +388,10 @@ class InputManager: ObservableObject {
         // Store visibility preferences in UserDefaults
         UserPreferences.setShowKeyboardInput(keyboard)
         UserPreferences.setShowMouseInput(mouse)
+        
+        // Update published properties
+        self.showKeyboardInput = keyboard
+        self.showMouseInput = mouse
         
         // Update active input types based on visibility settings
         if !keyboard {

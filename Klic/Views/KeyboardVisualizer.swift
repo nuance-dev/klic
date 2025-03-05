@@ -355,14 +355,6 @@ struct ShortcutVisualizer: View {
                             )
                         )
                     
-                    // Subtle highlight at the top
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.1))
-                        .frame(height: 1)
-                        .padding(.horizontal, 1)
-                        .offset(y: -7)
-                        .blendMode(.plusLighter)
-                    
                     // Subtle border
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
@@ -446,14 +438,6 @@ struct KeyCapsuleView: View {
                                 endPoint: .bottom
                             )
                         )
-                    
-                    // Subtle highlight at the top
-                    Capsule()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(height: 1)
-                        .padding(.horizontal, 1)
-                        .offset(y: -6)
-                        .blendMode(.plusLighter)
                     
                     // Border
                     Capsule()

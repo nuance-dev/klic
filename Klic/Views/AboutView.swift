@@ -41,11 +41,11 @@ struct AboutView: View {
             
             // Credits
             VStack(spacing: 10) {
-                Text("© 2023-2025 Klic Team")
+                Text("© 2023-2025 @nuancedev")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundColor(.secondary)
                 
-                Link("Website", destination: URL(string: "https://klic.app")!)
+                Link("nuanc.me", destination: URL(string: "https://nuanc.me")!)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
             }
         }
