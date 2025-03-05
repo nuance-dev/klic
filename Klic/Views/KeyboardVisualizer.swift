@@ -18,16 +18,20 @@ struct KeyboardVisualizer: View {
     
     // Keyboard shortcut detection
     private var isShortcut: Bool {
+        // We need to have at least one modifier key AND one regular key
         let hasModifier = filteredEvents.contains { event in
             guard let keyEvent = event.keyboardEvent else { return false }
-            return !keyEvent.modifiers.isEmpty
+            // Count either explicit modifiers list or actual modifier keys
+            return !keyEvent.modifiers.isEmpty || keyEvent.isModifierKey
         }
         
         let hasRegularKey = filteredEvents.contains { event in
             guard let keyEvent = event.keyboardEvent else { return false }
-            return keyEvent.modifiers.isEmpty && keyEvent.characters?.count == 1
+            // Regular keys are ones that aren't modifiers themselves and are down
+            return !keyEvent.isModifierKey && keyEvent.isDown
         }
         
+        // Only consider as shortcut if we have both parts
         return hasModifier && hasRegularKey
     }
     
@@ -167,57 +171,78 @@ struct KeyboardVisualizer: View {
     private func getShortcutText() -> String {
         var text = ""
         
-        // Add modifiers - collect all modifiers into a single set
-        var allModifiers: [KeyModifier] = []
+        // Track which modifiers we've added
+        var processedModifiers: Set<KeyModifier> = []
         
-        // Create a map to collect all key-down events with their timestamps
-        var regularKeyEvents: [(keyEvent: KeyboardEvent, timestamp: Date)] = []
+        // Find all down modifier keys at the moment
+        var activeModifiers: Set<KeyModifier> = []
         
-        // First collect modifiers and regular key events
+        // First pass: collect all active modifiers from events
         for event in filteredEvents {
             if let keyEvent = event.keyboardEvent {
-                // Add modifiers to the list
+                // Add modifiers from the modifier list
                 if !keyEvent.modifiers.isEmpty {
-                    allModifiers.append(contentsOf: keyEvent.modifiers)
+                    activeModifiers.formUnion(keyEvent.modifiers)
                 }
                 
-                // If this is a regular key (not a modifier key itself)
-                if !keyEvent.isModifierKey && keyEvent.isDown {
-                    regularKeyEvents.append((keyEvent, event.timestamp))
-                }
-                
-                // Also add the key itself if it's a modifier key (e.g., Cmd, Shift)
-                if keyEvent.isModifierKey {
-                    for modifier in KeyModifier.allCases {
-                        if modifier.keyCode == keyEvent.keyCode {
-                            allModifiers.append(modifier)
-                        }
+                // Also add modifier from the key itself if it's a modifier key
+                if keyEvent.isModifierKey && keyEvent.isDown {
+                    if let mod = KeyModifier.allCases.first(where: { $0.keyCode == keyEvent.keyCode }) {
+                        activeModifiers.insert(mod)
                     }
                 }
             }
         }
         
-        // Remove duplicates from modifiers
-        allModifiers = Array(Set(allModifiers))
+        // Process modifiers in standard order: Control, Option, Shift, Command
+        let orderedModifiers: [KeyModifier] = [.control, .option, .shift, .command]
+        for modifier in orderedModifiers {
+            if activeModifiers.contains(modifier) && !processedModifiers.contains(modifier) {
+                processedModifiers.insert(modifier)
+                
+                switch modifier {
+                case .command: text += "⌘"
+                case .shift: text += "⇧" 
+                case .option: text += "⌥"
+                case .control: text += "⌃"
+                case .function: text += "fn"
+                case .capsLock: text += "⇪"
+                }
+            }
+        }
         
-        // Add modifier symbols
-        if allModifiers.contains(.command) { text += "⌘" }
-        if allModifiers.contains(.shift) { text += "⇧" }
-        if allModifiers.contains(.option) { text += "⌥" }
-        if allModifiers.contains(.control) { text += "⌃" }
+        // Second pass: find the most recent regular key
+        var latestRegularKey: (keyEvent: KeyboardEvent, timestamp: Date)? = nil
         
-        // Sort regular key events by timestamp (most recent first) to get the most recent keypress
-        regularKeyEvents.sort { $0.timestamp > $1.timestamp }
+        for event in filteredEvents {
+            if let keyEvent = event.keyboardEvent, 
+               !keyEvent.isModifierKey && 
+               keyEvent.isDown {
+                // If we haven't found a key yet, or this one is more recent
+                if latestRegularKey == nil || event.timestamp > latestRegularKey!.timestamp {
+                    latestRegularKey = (keyEvent, event.timestamp)
+                }
+            }
+        }
         
-        // Add the most recent regular key if available
-        if let mostRecentKey = regularKeyEvents.first?.keyEvent, 
-           let character = mostRecentKey.characters,
+        // Add the regular key to complete the shortcut
+        if let (keyEvent, _) = latestRegularKey, 
+           let character = keyEvent.characters,
            !character.isEmpty {
-            if character.count == 1 {
-                text += character.uppercased()
+            
+            // For special keys, use the key representation
+            if character.count > 1 || character == " " || character == "\r" || character == "\t" {
+                switch character {
+                case "\r": text += "↩" // return
+                case "\t": text += "⇥" // tab
+                case " ": text += "Space"
+                case "\u{1b}": text += "Esc"
+                case "\u{7f}": text += "⌫" // delete/backspace
+                default: text += character
+                }
             } else {
-                // For special keys (e.g., arrow keys, function keys)
-                text += character
+                // For regular alphanumeric keys, use uppercase
+                text += character.uppercased()
             }
         }
         

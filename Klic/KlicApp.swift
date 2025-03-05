@@ -32,8 +32,6 @@ final class AppDelegate: NSObject {
         // Register default values
         UserPreferences.registerDefaults()
         
-        // DO NOT create status bar here - wait until the app has finished launching
-        
         // Listen for when the window becomes key to reset its appearance if needed
         becomeKeyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
@@ -71,18 +69,26 @@ final class AppDelegate: NSObject {
             // Setup app to run in the background without dock icon
             NSApp.setActivationPolicy(.accessory)
             
-            // Delay the setup of menu bar to ensure everything is initialized
+            // Setup menu bar immediately
+            self?.setupMenuBar()
+            
+            // And try again after short delays to ensure it's set up
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self?.setupMenuBar()
             }
             
-            // Force the menu bar setup with another attempt after a longer delay
+            // And once more after a longer delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                if self?.statusItem == nil {
-                    Logger.warning("Status bar not set up after initial attempt, trying again", log: Logger.app)
+                if self?._statusItem == nil {
+                    Logger.warning("Status bar not set up after initial attempts, trying again", log: Logger.app)
                     self?.setupMenuBar()
                 }
             }
+        }
+        
+        // Also try to set up the menu bar here, which might help in some cases
+        DispatchQueue.main.async { [weak self] in
+            self?.setupMenuBar()
         }
         
         Logger.info("AppDelegate initialized successfully", log: Logger.app)
@@ -112,9 +118,9 @@ final class AppDelegate: NSObject {
             return
         }
         
-        // Check if app is active and running
-        guard NSApp.isRunning else {
-            Logger.warning("Tried to setup menu bar before app is running, will retry later", log: Logger.app)
+        // Check if app is active - remove the NSApp.isRunning check as it might be unreliable
+        guard NSApplication.shared != nil else {
+            Logger.warning("NSApplication.shared is nil, will retry later", log: Logger.app)
             // Schedule a retry after a short delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 self?.setupMenuBar()
@@ -123,7 +129,7 @@ final class AppDelegate: NSObject {
         }
         
         // Already set up?
-        if statusItem != nil {
+        if _statusItem != nil {
             Logger.debug("Menu bar already set up", log: Logger.app)
             return
         }
@@ -135,12 +141,20 @@ final class AppDelegate: NSObject {
         
         if let button = newStatusItem.button {
             // Create a more visually appealing template image
-            let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Klic")
-            image?.isTemplate = true // Make it a template image so it adapts to the menu bar
-            button.image = image
-            button.toolTip = "Klic Input Visualizer"
+            if let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Klic") {
+                image.isTemplate = true // Make it a template image so it adapts to the menu bar
+                button.image = image
+                button.toolTip = "Klic Input Visualizer"
+                
+                // Force update the button's image
+                button.needsDisplay = true
+            } else {
+                Logger.warning("Failed to create menu bar icon image", log: Logger.app)
+                // Fallback to a text representation if image fails
+                button.title = "⌨️"
+            }
             
-            // Create the menu once button is configured
+            // Create the menu
             let menu = NSMenu()
             
             // Add "Show Overlay Demo" item that shows example inputs
