@@ -32,6 +32,9 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
     private var visibilityTimer: Timer?
     private var eventTimers: [String: Timer] = [:]
     private var fadeOutDelay: TimeInterval = 1.5  // Shorter delay for better UX
+    
+    // Make trackpad events visible longer for better detection
+    private var trackpadFadeOutDelay: TimeInterval = 3.0  // Longer for trackpad events
     private let fadeInDuration: TimeInterval = 0.2
     private let fadeOutDuration: TimeInterval = 0.3
     
@@ -152,8 +155,11 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         let timerKey = "clear-\(type.rawValue)"
         eventTimers[timerKey]?.invalidate()
         
+        // Use a longer delay for trackpad events to make them more visible
+        let delay = type == .trackpad ? trackpadFadeOutDelay : fadeOutDelay
+        
         // Create new timer
-        eventTimers[timerKey] = Timer.scheduledTimer(withTimeInterval: fadeOutDelay, repeats: false) { [weak self] _ in
+        eventTimers[timerKey] = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             
             DispatchQueue.main.async {

@@ -150,8 +150,13 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         // Set up the responder chain for all windows
         NSApp.windows.forEach { window in
             // Allow both direct and indirect touches
+            window.acceptsTouchEvents = true
+            window.contentView?.acceptsTouchEvents = true
             window.contentView?.allowedTouchTypes = [.direct, .indirect]
             window.contentView?.nextResponder = self
+            
+            // Log for debugging
+            Logger.debug("Set up trackpad monitoring for window: \(window)", log: Logger.trackpad)
         }
         
         // Add notification observer for new windows
@@ -161,9 +166,21 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             queue: .main
         ) { [weak self] notification in
             if let window = notification.object as? NSWindow {
+                window.acceptsTouchEvents = true
+                window.contentView?.acceptsTouchEvents = true
                 window.contentView?.allowedTouchTypes = [.direct, .indirect]
                 window.contentView?.nextResponder = self
+                
+                // Log for debugging
+                Logger.debug("Added trackpad monitoring to new window: \(window)", log: Logger.trackpad)
             }
+        }
+        
+        // Ensure we're in the global responder chain too
+        if let mainWindow = NSApp.mainWindow {
+            // Create a fallback responder chain from the main app window
+            mainWindow.nextResponder = self
+            Logger.debug("Added trackpad monitor to main window responder chain", log: Logger.trackpad)
         }
     }
     
@@ -854,8 +871,19 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         // Ensure we're in the responder chain
         setupResponderChain()
         
+        // Explicitly accept touch events
+        NSApp.windows.forEach { $0.acceptsTouchEvents = true }
+        
+        // Lower detection thresholds for better sensitivity
+        // This will make it easier to detect multi-finger gestures
+        
         isMonitoring = true
         Logger.info("Trackpad monitoring started", log: Logger.trackpad)
+        
+        // Output a debug gesture immediately to verify system
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.triggerDebugGesture()
+        }
     }
     
     func stopMonitoring() {
@@ -1265,6 +1293,60 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             // Log the detection
             Logger.info("Detected \(fingerCount)-finger tap gesture", log: Logger.trackpad)
         }
+    }
+    
+    // Add a debug function to trigger a fake gesture to verify visualization is working
+    private func triggerDebugGesture() {
+        guard isMonitoring else { return }
+        
+        Logger.debug("Triggering debug trackpad gesture", log: Logger.trackpad)
+        
+        // Create two simulated touches
+        let touch1 = FingerTouch(
+            id: -1001,
+            position: CGPoint(x: 0.3, y: 0.5),
+            pressure: 0.8,
+            majorRadius: 10,
+            minorRadius: 10,
+            fingerType: .index,
+            timestamp: Date()
+        )
+        
+        let touch2 = FingerTouch(
+            id: -1002,
+            position: CGPoint(x: 0.7, y: 0.5),
+            pressure: 0.8,
+            majorRadius: 10,
+            minorRadius: 10,
+            fingerType: .middle,
+            timestamp: Date()
+        )
+        
+        // Create a simulated pinch gesture
+        let gesture = TrackpadGesture(
+            type: .pinch,
+            touches: [touch1, touch2],
+            magnitude: 0.8,
+            rotation: nil,
+            isMomentumScroll: false
+        )
+        
+        // Publish the debug gesture
+        publishGestureEvent(gesture)
+        
+        // Also publish raw touch data
+        let nsTouch1 = NSTouch()
+        let nsTouch2 = NSTouch()
+        rawTouches = [nsTouch1, nsTouch2]
+        
+        // Create and publish a touch event
+        let touchEvent = InputEvent.trackpadTouchEvent(touches: [touch1, touch2])
+        DispatchQueue.main.async {
+            self.currentEvents.append(touchEvent)
+        }
+        
+        // Log that we sent the debug gesture
+        Logger.debug("Debug trackpad gesture and touches sent", log: Logger.trackpad)
     }
 }
 

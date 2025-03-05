@@ -57,6 +57,20 @@ struct TrackpadVisualizer: View {
             
             // Process events
             processEvents()
+            
+            // Debug - force some opacity on appearance to verify the view is working
+            gestureOpacity = 0.8
+            touchesOpacity = 0.8
+            
+            // Then fade it out after a moment (if no real events come in)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if self.currentGesture == nil && self.activeTouches.isEmpty {
+                    withAnimation(.easeOut(duration: 0.5)) {
+                        self.gestureOpacity = 0
+                        self.touchesOpacity = 0
+                    }
+                }
+            }
         }
         .onChange(of: events) { oldValue, newValue in
             processEvents()
@@ -69,12 +83,23 @@ struct TrackpadVisualizer: View {
         if let gestureEvent = events.first(where: { $0.trackpadGesture != nil }),
            let gesture = gestureEvent.trackpadGesture {
             handleNewGesture(gesture)
+            
+            // Log for debugging
+            Logger.debug("TrackpadVisualizer: Received gesture: \(gesture.type)", log: Logger.trackpad)
         }
         
         // Find touch events
         if let touchEvent = events.first(where: { $0.trackpadTouches != nil }),
            let touches = touchEvent.trackpadTouches, !touches.isEmpty {
             handleNewTouches(touches)
+            
+            // Log for debugging
+            Logger.debug("TrackpadVisualizer: Received \(touches.count) touches", log: Logger.trackpad)
+        }
+        
+        // For debugging - log event count
+        if !events.isEmpty {
+            Logger.debug("TrackpadVisualizer: Processing \(events.count) total events", log: Logger.trackpad)
         }
     }
     
@@ -543,56 +568,65 @@ struct TrackpadVisualizer: View {
     // MARK: - Event Handling
     
     private func handleNewGesture(_ gesture: TrackpadGesture) {
-        // Update current gesture
+        // Set the current gesture
         currentGesture = gesture
         
-        // Reset animation state
-        isAnimating = true
-        animationProgress = 0
+        // Log what we received
+        Logger.debug("Displaying trackpad gesture: \(gesture.type)", log: Logger.trackpad)
         
-        // Animate gesture appearance
+        // Fade in the gesture visualization
         withAnimation(.easeIn(duration: gestureFadeInDuration)) {
             gestureOpacity = 1.0
         }
         
-        // Schedule gesture fade-out
-        DispatchQueue.main.asyncAfter(deadline: .now() + gestureDuration) {
-            withAnimation(.easeOut(duration: gestureFadeOutDuration)) {
-                gestureOpacity = 0
-            }
-            
-            // Reset after animation completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + gestureFadeOutDuration) {
-                if self.gestureOpacity == 0 {
-                    self.currentGesture = nil
-                    self.isAnimating = false
-                }
-            }
+        // Start the animation for the gesture
+        isAnimating = true
+        withAnimation(.easeInOut(duration: 0.5).repeatCount(2, autoreverses: true)) {
+            animationProgress = 1.0
         }
         
-        // Log gesture for debugging
-        Logger.debug("Visualizing gesture: \(gestureDescription(for: gesture))", log: Logger.trackpad)
-        
-        // For multi-finger gestures, provide enhanced visual feedback
-        if case .tap(let count) = gesture.type, gesture.touches.count >= 3 {
-            // Animate the gesture with a pulse effect
-            withAnimation(.easeInOut(duration: 0.3).repeatCount(2, autoreverses: true)) {
-                animationProgress = 1.0
+        // Schedule the fade out after the gesture duration
+        DispatchQueue.main.asyncAfter(deadline: .now() + gestureDuration) {
+            // Only fade out if this is still the current gesture
+            if self.currentGesture?.id == gesture.id {
+                withAnimation(.easeOut(duration: self.gestureFadeOutDuration)) {
+                    self.gestureOpacity = 0
+                }
+                
+                // Clear the gesture after it's fully faded out
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.gestureFadeOutDuration + 0.1) {
+                    if self.currentGesture?.id == gesture.id {
+                        self.currentGesture = nil
+                        self.isAnimating = false
+                        self.animationProgress = 0
+                    }
+                }
             }
         }
     }
     
     private func handleNewTouches(_ touches: [FingerTouch]) {
-        // Update active touches
-        withAnimation(.easeOut(duration: touchFadeInDuration)) {
-            activeTouches = touches
+        // Set the current touches
+        activeTouches = touches
+        
+        // Log what we received
+        Logger.debug("Displaying \(touches.count) trackpad touches", log: Logger.trackpad)
+        
+        // Fade in the touch visualization
+        withAnimation(.easeIn(duration: touchFadeInDuration)) {
             touchesOpacity = 1.0
         }
         
-        // Schedule fade out
+        // Schedule the fade out after the touch duration
         DispatchQueue.main.asyncAfter(deadline: .now() + touchDuration) {
-            withAnimation(.easeIn(duration: touchFadeOutDuration)) {
-                touchesOpacity = 0
+            // Only fade out if these are still the current touches
+            withAnimation(.easeOut(duration: self.touchFadeOutDuration)) {
+                self.touchesOpacity = 0
+            }
+            
+            // Clear the touches after they've fully faded out
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.touchFadeOutDuration + 0.1) {
+                self.activeTouches = []
             }
         }
     }

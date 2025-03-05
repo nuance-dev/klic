@@ -1,32 +1,53 @@
 import Foundation
 import os.log
 
-class Logger {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.minimal.Klic"
+// Custom logger with enhanced formatting and subsystem organization
+enum Logger {
+    // Define subsystems
+    static let app = OSLog(subsystem: "com.klic.app", category: "Application")
+    static let keyboard = OSLog(subsystem: "com.klic.app", category: "Keyboard")
+    static let mouse = OSLog(subsystem: "com.klic.app", category: "Mouse")
+    static let trackpad = OSLog(subsystem: "com.klic.app", category: "Trackpad")
+    static let overlay = OSLog(subsystem: "com.klic.app", category: "Overlay")
     
-    static let keyboard = OSLog(subsystem: subsystem, category: "keyboard")
-    static let mouse = OSLog(subsystem: subsystem, category: "mouse")
-    static let trackpad = OSLog(subsystem: subsystem, category: "trackpad")
-    static let app = OSLog(subsystem: subsystem, category: "app")
+    // Set log levels - set trackpad to .debug for verbose logging
+    private static var logLevels: [OSLog: OSLogType] = [
+        app: .info,
+        keyboard: .info,
+        mouse: .info,
+        trackpad: .debug, // Set to .debug to see all trackpad events
+        overlay: .info
+    ]
     
-    static func debug(_ message: String, log: OSLog = app) {
-        os_log("%{public}s", log: log, type: .debug, message)
+    // MARK: - Logging Methods
+    
+    static func debug(_ message: String, log: OSLog) {
+        guard logLevels[log] == .debug else { return }
+        os_log("[DEBUG] %{public}@", log: log, type: .debug, message)
     }
     
-    static func info(_ message: String, log: OSLog = app) {
-        os_log("%{public}s", log: log, type: .info, message)
+    static func info(_ message: String, log: OSLog) {
+        guard logLevels[log] == .debug || logLevels[log] == .info else { return }
+        os_log("[INFO] %{public}@", log: log, type: .info, message)
     }
     
-    static func warning(_ message: String, log: OSLog = app) {
-        os_log("%{public}s", log: log, type: .default, message)
+    static func warning(_ message: String, log: OSLog) {
+        guard logLevels[log] != .error else { return }
+        os_log("[WARNING] %{public}@", log: log, type: .default, message)
     }
     
-    static func error(_ message: String, log: OSLog = app) {
-        os_log("%{public}s", log: log, type: .error, message)
+    static func error(_ message: String, log: OSLog) {
+        os_log("[ERROR] %{public}@", log: log, type: .error, message)
     }
     
-    static func exception(_ error: Error, context: String? = nil, log: OSLog = app) {
-        let contextMessage = context != nil ? " in context: \(context!)" : ""
-        os_log("Exception%{public}s: %{public}s", log: log, type: .fault, contextMessage, error.localizedDescription)
+    static func exception(_ message: String, error: Error, log: OSLog) {
+        os_log("[EXCEPTION] %{public}@: %{public}@", log: log, type: .fault, message, error.localizedDescription)
+    }
+}
+
+// Extension to make testing for log level easier
+extension OSLogType: Equatable {
+    public static func == (lhs: OSLogType, rhs: OSLogType) -> Bool {
+        return lhs.rawValue == rhs.rawValue
     }
 } 

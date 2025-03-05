@@ -163,6 +163,12 @@ final class AppDelegate: NSObject {
             showDemoItem.target = self
             menu.addItem(showDemoItem)
             
+            // Add specific trackpad demo for easier testing
+            let showTrackpadDemoItem = NSMenuItem(title: "Test Trackpad Visualization", action: #selector(menuShowTrackpadDemo), keyEquivalent: "t")
+            showTrackpadDemoItem.keyEquivalentModifierMask = [.command, .option]
+            showTrackpadDemoItem.target = self
+            menu.addItem(showTrackpadDemoItem)
+            
             // Add "Show Overlay" item that just makes the overlay visible briefly
             let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
             showOverlayItem.keyEquivalentModifierMask = [.command]
@@ -257,6 +263,11 @@ final class AppDelegate: NSObject {
     
     @objc func menuShowPreferences() {
         NotificationCenter.default.post(name: NSNotification.Name("ShowPreferences"), object: nil)
+    }
+    
+    @objc func menuShowTrackpadDemo() {
+        // Post a notification that will be received by the ContentView
+        NotificationCenter.default.post(name: NSNotification.Name("ShowTrackpadDemo"), object: nil)
     }
     
     @objc func showAbout() {
@@ -618,6 +629,10 @@ struct KlicApp: App {
                     // Show demo inputs when requested from menu
                     inputManager.showDemoInputs()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowTrackpadDemo"))) { _ in
+                    // Show trackpad-specific demo
+                    inputManager.showTrackpadDemo()
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -665,6 +680,108 @@ struct KlicApp: App {
 }
 
 extension InputManager {
-    // This extension is intentionally left empty
-    // The temporarilyAddEvents method was moved to InputManager.swift
+    // Show trackpad-specific demo
+    func showTrackpadDemo() {
+        Logger.debug("Showing trackpad-specific demo", log: Logger.app)
+        
+        // Clear existing events
+        self.trackpadEvents = []
+        
+        // Get current timestamp
+        let now = Date()
+        
+        // Create demo trackpad gestures
+        
+        // 1. Pinch gesture
+        let touch1Pinch = FingerTouch(id: 1001, position: CGPoint(x: 0.3, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: now)
+        let touch2Pinch = FingerTouch(id: 1002, position: CGPoint(x: 0.7, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: now)
+        
+        let pinchGesture = TrackpadGesture(
+            type: .pinch,
+            touches: [touch1Pinch, touch2Pinch],
+            magnitude: 0.8,
+            rotation: nil,
+            isMomentumScroll: false
+        )
+        
+        // Add the pinch gesture event
+        let pinchEvent = InputEvent(
+            id: UUID(),
+            timestamp: now,
+            type: .trackpadGesture,
+            keyboardEvent: nil,
+            mouseEvent: nil,
+            trackpadGesture: pinchGesture,
+            trackpadTouches: [touch1Pinch, touch2Pinch]
+        )
+        
+        // Show the gesture
+        self.trackpadEvents = [pinchEvent]
+        self.updateActiveInputTypes(adding: .trackpad)
+        self.updateAllEvents()
+        self.showOverlay()
+        
+        // After a delay, show a swipe gesture
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            // 2. Three-finger swipe
+            let touch1Swipe = FingerTouch(id: 2001, position: CGPoint(x: 0.3, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
+            let touch2Swipe = FingerTouch(id: 2002, position: CGPoint(x: 0.5, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: Date())
+            let touch3Swipe = FingerTouch(id: 2003, position: CGPoint(x: 0.7, y: 0.4), pressure: 0.7, majorRadius: 10, minorRadius: 10, fingerType: .ring, timestamp: Date())
+            
+            let swipeGesture = TrackpadGesture(
+                type: .multiFingerSwipe(direction: .right, fingerCount: 3),
+                touches: [touch1Swipe, touch2Swipe, touch3Swipe],
+                magnitude: 1.0,
+                rotation: nil,
+                isMomentumScroll: false
+            )
+            
+            // Add the swipe gesture event
+            let swipeEvent = InputEvent(
+                id: UUID(),
+                timestamp: Date(),
+                type: .trackpadGesture,
+                keyboardEvent: nil,
+                mouseEvent: nil,
+                trackpadGesture: swipeGesture,
+                trackpadTouches: [touch1Swipe, touch2Swipe, touch3Swipe]
+            )
+            
+            // Show the gesture
+            self.trackpadEvents = [swipeEvent]
+            self.updateAllEvents()
+            self.showOverlay()
+        }
+        
+        // After another delay, show a rotation gesture
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            // 3. Rotation gesture
+            let touch1Rotate = FingerTouch(id: 3001, position: CGPoint(x: 0.4, y: 0.6), pressure: 0.6, majorRadius: 10, minorRadius: 10, fingerType: .thumb, timestamp: Date())
+            let touch2Rotate = FingerTouch(id: 3002, position: CGPoint(x: 0.6, y: 0.4), pressure: 0.6, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
+            
+            let rotateGesture = TrackpadGesture(
+                type: .rotate,
+                touches: [touch1Rotate, touch2Rotate],
+                magnitude: 0.9,
+                rotation: 45.0,
+                isMomentumScroll: false
+            )
+            
+            // Add the rotate gesture event
+            let rotateEvent = InputEvent(
+                id: UUID(),
+                timestamp: Date(),
+                type: .trackpadGesture,
+                keyboardEvent: nil,
+                mouseEvent: nil,
+                trackpadGesture: rotateGesture,
+                trackpadTouches: [touch1Rotate, touch2Rotate]
+            )
+            
+            // Show the gesture
+            self.trackpadEvents = [rotateEvent]
+            self.updateAllEvents()
+            self.showOverlay()
+        }
+    }
 }
