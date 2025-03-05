@@ -1,95 +1,156 @@
 import SwiftUI
+import AppKit
 
-@main
-struct KlicApp: App {
-    @StateObject private var inputManager = InputManager()
-    @State private var isShowingPreferences = false
-    @State private var overlayOpacity: Double = 0.9
+// Class for handling AppKit/Objective-C related tasks that can't be in a struct
+final class AppDelegate: NSObject {
+    static let shared: AppDelegate = {
+        let instance = AppDelegate()
+        Logger.info("AppDelegate singleton initialized", log: Logger.app)
+        return instance
+    }()
     
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(inputManager)
-                .background(Color.clear)
-                .ignoresSafeArea()
-                .onAppear {
-                    setupApp()
-                }
-                .sheet(isPresented: $isShowingPreferences) {
-                    ConfigurationView(opacity: $overlayOpacity)
-                        .onChange(of: overlayOpacity) { oldValue, newValue in
-                            UserDefaults.standard.set(newValue, forKey: "overlayOpacity")
-                            inputManager.setOpacityPreference(newValue)
-                        }
-                }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        
-        // Add a menu bar extra for settings
-        MenuBarExtra {
-            Button("Show Overlay") {
-                showOverlayFromMenu()
-            }
-            .keyboardShortcut("o", modifiers: [.command, .shift])
-            
-            Divider()
-            
-            Button("Preferences...") {
-                isShowingPreferences = true
-                // Ensure app is frontmost when opening preferences
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            .keyboardShortcut(",", modifiers: .command)
-            
-            Divider()
-            
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
-            .keyboardShortcut("q", modifiers: .command)
-        } label: {
-            VStack {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 18))
-                Text("Klic")
-                    .font(.system(size: 10))
-            }
-        }
-    }
+    // Use this flag to control whether to use status bar or not
+    private let useStatusBar = false
     
-    private func setupApp() {
-        // Get opacity preference if saved
-        if let savedOpacity = UserDefaults.standard.object(forKey: "overlayOpacity") as? Double {
-            overlayOpacity = savedOpacity
-            inputManager.setOpacityPreference(savedOpacity)
-        }
+    // Status bar item reference to keep it from being deallocated
+    private var statusItem: NSStatusItem?
+    
+    // Notification observers
+    private var becomeKeyObserver: NSObjectProtocol?
+    private var resizeObserver: NSObjectProtocol?
+    private var positionObserver: NSObjectProtocol?
+    private var appFinishedLaunchingObserver: NSObjectProtocol?
+    
+    override init() {
+        super.init()
         
-        // Add delay to ensure proper window configuration after app launch
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.configureWindowAppearance()
-        }
+        // Register default values
+        UserPreferences.registerDefaults()
+        
+        // DO NOT create status bar here - wait until the app has finished launching
         
         // Listen for when the window becomes key to reset its appearance if needed
-        NotificationCenter.default.addObserver(
+        becomeKeyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            self.configureWindowAppearance()
+        ) { [weak self] _ in
+            self?.configureWindowAppearance()
         }
         
         // Listen for window resize to ensure proper appearance
-        NotificationCenter.default.addObserver(
+        resizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            self.configureWindowAppearance()
+        ) { [weak self] _ in
+            self?.configureWindowAppearance()
+        }
+        
+        // Listen for position change notifications
+        positionObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ReconfigureOverlayPosition"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Reconfigure window appearance when position changes
+            self?.configureWindowAppearance()
+        }
+        
+        // Add observer for app finished launching
+        appFinishedLaunchingObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Delay the setup of menu bar to ensure everything is initialized
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self?.setupMenuBar()
+            }
+        }
+        
+        Logger.info("AppDelegate initialized successfully", log: Logger.app)
+    }
+    
+    deinit {
+        // Remove all observers
+        [becomeKeyObserver, resizeObserver, positionObserver, appFinishedLaunchingObserver].forEach { observer in
+            if let observer = observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
         }
     }
     
-    private func configureWindowAppearance() {
+    func setupMenuBar() {
+        // If we don't want to use status bar, just return
+        if !useStatusBar {
+            Logger.info("Status bar disabled, skipping setup", log: Logger.app)
+            return
+        }
+        
+        // Make sure we're on the main thread
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.setupMenuBar()
+            }
+            return
+        }
+        
+        // Check if app is active and running
+        guard NSApp.isRunning else {
+            Logger.warning("Tried to setup menu bar before app is running", log: Logger.app)
+            return
+        }
+        
+        // Already set up?
+        if statusItem != nil {
+            Logger.debug("Menu bar already set up", log: Logger.app)
+            return
+        }
+        
+        do {
+            Logger.debug("Setting up menu bar", log: Logger.app)
+            
+            // Use try-catch to handle any potential exceptions
+            try autoreleasepool {
+                // Create status item in the menu bar
+                let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+                self.statusItem = newStatusItem
+                
+                if let button = newStatusItem.button {
+                    button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Klic")
+                    button.toolTip = "Klic Input Visualizer"
+                } else {
+                    Logger.warning("Status item button is nil", log: Logger.app)
+                }
+                
+                // Create menu
+                let menu = NSMenu()
+                
+                // Add menu items
+                menu.addItem(NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o"))
+                menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+                menu.addItem(NSMenuItem.separator())
+                menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+                
+                newStatusItem.menu = menu
+                
+                Logger.info("Menu bar setup completed successfully", log: Logger.app)
+            }
+        } catch {
+            Logger.exception(error, context: "Setting up menu bar", log: Logger.app)
+        }
+    }
+    
+    @objc func menuShowOverlay() {
+        showOverlayFromMenu()
+    }
+    
+    @objc func menuShowPreferences() {
+        NotificationCenter.default.post(name: NSNotification.Name("ShowPreferences"), object: nil)
+    }
+    
+    func configureWindowAppearance() {
         if let window = NSApplication.shared.windows.first {
             // Make window float above other windows
             window.level = .floating
@@ -102,15 +163,41 @@ struct KlicApp: App {
             // Ensure mouse events pass through the window
             window.ignoresMouseEvents = true
             
-            // Position at the bottom center of the screen
+            // Get the overlay position preference
+            let positionPreference = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
+            let position = OverlayPosition.allCases.first { $0.rawValue == positionPreference } ?? .bottomCenter
+            
+            // Position based on preference
             if let screen = NSScreen.main {
-                let screenRect = screen.frame
-                let windowSize = CGSize(width: 650, height: 350)
-                let origin = CGPoint(
-                    x: screenRect.midX - windowSize.width / 2,
-                    y: screenRect.minY + 120 // Slightly higher position for better visibility
+                let defaultWindowSize = CGSize(width: 650, height: 350)
+                
+                // Adjust size based on position
+                let sizeAdjustment = position.getSizeAdjustment()
+                let adjustedWindowSize = CGSize(
+                    width: defaultWindowSize.width * sizeAdjustment.width,
+                    height: defaultWindowSize.height * sizeAdjustment.height
                 )
-                window.setFrame(CGRect(origin: origin, size: windowSize), display: true)
+                
+                // Get position based on preference
+                let origin = position.getPositionOrigin(for: screen, windowSize: adjustedWindowSize)
+                
+                // Set window frame
+                window.setFrame(CGRect(origin: origin, size: adjustedWindowSize), display: true)
+                
+                // Special styling for expanded notch
+                if position == .expandedNotch {
+                    // Apply special corner radius for notch appearance
+                    if let contentView = window.contentView?.superview {
+                        contentView.wantsLayer = true
+                        contentView.layer?.cornerRadius = 12
+                        contentView.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+                    }
+                } else {
+                    // Reset corner radius for other positions
+                    if let contentView = window.contentView?.superview {
+                        contentView.layer?.cornerRadius = 0
+                    }
+                }
             }
             
             // Completely hide the title bar and window controls
@@ -203,7 +290,7 @@ struct KlicApp: App {
         return nil
     }
     
-    private func showOverlayFromMenu() {
+    func showOverlayFromMenu() {
         // Ensure window is visible and properly configured
         DispatchQueue.main.async {
             if let window = NSApplication.shared.windows.first {
@@ -211,8 +298,8 @@ struct KlicApp: App {
                 self.configureWindowAppearance()
                 
                 // Ensure all input monitors are running
-                if !self.inputManager.checkMonitoringStatus() {
-                    self.inputManager.restartMonitoring()
+                if !InputManager.shared.checkMonitoringStatus() {
+                    InputManager.shared.restartMonitoring()
                 }
                 
                 // Make sure window is properly configured for overlay
@@ -221,103 +308,136 @@ struct KlicApp: App {
                 Logger.debug("Show overlay triggered from menu", log: Logger.app)
                 
                 // Clear any existing events before demo
-                self.inputManager.clearAllEvents()
+                InputManager.shared.clearAllEvents()
                 
                 // Create test events for demonstration
-                self.showDemoInputs()
-            }
-        }
-    }
-    
-    private func showDemoInputs() {
-        // First clear any existing events
-        inputManager.clearAllEvents()
-        
-        // First show a keyboard shortcut
-        let commandKey = InputEvent.keyEvent(
-            type: .keyDown,
-            keyCode: 55, // Command key
-            characters: "⌘",
-            modifiers: .command,
-            isRepeat: false
-        )
-        
-        let shiftKey = InputEvent.keyEvent(
-            type: .keyDown,
-            keyCode: 56, // Shift key
-            characters: "⇧",
-            modifiers: .shift,
-            isRepeat: false
-        )
-        
-        let letterKey = InputEvent.keyEvent(
-            type: .keyDown,
-            keyCode: 15, // R key
-            characters: "R",
-            modifiers: [.command, .shift],
-            isRepeat: false
-        )
-        
-        // Show keyboard shortcut
-        self.inputManager.temporarilyAddEvents(events: [commandKey, shiftKey, letterKey], ofType: .keyboard)
-        
-        // After a short delay, show a trackpad gesture
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            // Create a trackpad gesture (2-finger swipe)
-            let touchA = FingerTouch(
-                id: 1,
-                position: CGPoint(x: 0.45, y: 0.5),
-                pressure: 0.7,
-                majorRadius: 6,
-                minorRadius: 6,
-                fingerType: .index
-            )
-            
-            let touchB = FingerTouch(
-                id: 2,
-                position: CGPoint(x: 0.55, y: 0.5),
-                pressure: 0.7,
-                majorRadius: 6,
-                minorRadius: 6,
-                fingerType: .middle
-            )
-            
-            let trackpadGesture = TrackpadGesture(
-                type: .swipe(direction: .up),
-                touches: [touchA, touchB],
-                magnitude: 0.8,
-                rotation: nil
-            )
-            
-            let trackpadEvent = InputEvent.trackpadGestureEvent(gesture: trackpadGesture)
-            self.inputManager.temporarilyAddEvents(events: [trackpadEvent], ofType: .trackpad)
-            
-            // Finally, show a mouse click after another short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                let mouseEvent = InputEvent.mouseEvent(
-                    type: .mouseDown,
-                    position: CGPoint(x: 0.5, y: 0.5),
-                    button: .left,
-                    scrollDelta: nil,
-                    speed: 0
-                )
-                
-                self.inputManager.temporarilyAddEvents(events: [mouseEvent], ofType: .mouse)
+                InputManager.shared.showDemoInputs()
             }
         }
     }
 }
 
-extension InputManager {
-    // Clear all events before showing test events
-    func clearAllEvents() {
-        keyboardEvents = []
-        trackpadEvents = []
-        mouseEvents = []
-        activeInputTypes = []
-        updateAllEvents()
+// Overlay position enum
+enum OverlayPosition: String, CaseIterable, Identifiable {
+    case bottomCenter = "Bottom Center"
+    case topCenter = "Top Center"
+    case expandedNotch = "Expanded Notch" // New option for notch MacBooks
+    
+    var id: String { self.rawValue }
+    
+    // Return CGPoint for positioning based on screen size
+    func getPositionOrigin(for screen: NSScreen, windowSize: CGSize) -> CGPoint {
+        let screenRect = screen.frame
+        
+        switch self {
+        case .bottomCenter:
+            return CGPoint(
+                x: screenRect.midX - windowSize.width / 2,
+                y: screenRect.minY + 120 // Slightly higher from bottom
+            )
+        case .topCenter:
+            return CGPoint(
+                x: screenRect.midX - windowSize.width / 2,
+                y: screenRect.maxY - windowSize.height - 20 // Slightly below top
+            )
+        case .expandedNotch:
+            // Calculate position to align with notch on MacBooks with notch
+            // Notch is usually centered at the top
+            let notchWidth: CGFloat = 200 // Approximate notch width
+            let expandedWidth = notchWidth * 2 // Wider than notch for better aesthetic
+            
+            // Make it narrower for this special position
+            let adjustedWindowSize = CGSize(width: min(windowSize.width, expandedWidth), height: windowSize.height * 0.7)
+            
+            return CGPoint(
+                x: screenRect.midX - adjustedWindowSize.width / 2,
+                y: screenRect.maxY - adjustedWindowSize.height - 5 // Very close to top
+            )
+        }
     }
     
+    // Get window size adjustment factor for special positions
+    func getSizeAdjustment() -> CGSize {
+        switch self {
+        case .expandedNotch:
+            return CGSize(width: 0.4, height: 0.7) // 40% width, 70% height for notch
+        default:
+            return CGSize(width: 1.0, height: 1.0) // Default size
+        }
+    }
+}
+
+// Extension to check if the app is running
+extension NSApplication {
+    var isRunning: Bool {
+        return NSApp.windows.count > 0 && NSApp.isActive
+    }
+}
+
+@main
+struct KlicApp: App {
+    @StateObject private var inputManager = InputManager.shared
+    @State private var isShowingPreferences = false
+    @AppStorage("overlayOpacity") private var overlayOpacity: Double = 0.85
+    
+    // Hold a reference to our AppDelegate to prevent it from being deallocated
+    @State private var appDelegate = AppDelegate.shared
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environmentObject(inputManager)
+                .background(Color.clear)
+                .onAppear {
+                    setupApp()
+                }
+                .sheet(isPresented: $isShowingPreferences) {
+                    ConfigurationView(opacity: $overlayOpacity)
+                        .onChange(of: overlayOpacity) { oldValue, newValue in
+                            // Save the new opacity preference
+                            inputManager.setOpacityPreference(newValue)
+                        }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowPreferences"))) { _ in
+                    isShowingPreferences = true
+                }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Show Overlay") {
+                    showOverlayFromMenu()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                
+                Divider()
+                
+                Button("Preferences...") {
+                    isShowingPreferences = true
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
+    }
+    
+    private func setupApp() {
+        // Configure window appearance with a delay to ensure it's ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            appDelegate.configureWindowAppearance()
+            
+            // Try to setup menu bar again if needed
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                appDelegate.setupMenuBar()
+            }
+        }
+    }
+    
+    private func showOverlayFromMenu() {
+        appDelegate.showOverlayFromMenu()
+    }
+}
+
+extension InputManager {
     // Add events of specific type temporarily and show overlay
     func temporarilyAddEvents(events: [InputEvent], ofType type: InputType) {
         DispatchQueue.main.async {

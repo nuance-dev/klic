@@ -32,6 +32,11 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     @Published var rawTouches: [NSTouch] = []
     @Published var touchPhases: [Int: Set<NSTouch>] = [:]
     
+    // Computed property for active touches
+    var activeTouches: [FingerTouch] {
+        return touchIdentityMap.values.map { $0 }
+    }
+    
     // Track touch identities for proper sequence tracking
     private var touchIdentityMap: [String: FingerTouch] = [:]
     
@@ -59,6 +64,8 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     // Momentum scrolling detection
     private var inMomentumScrolling = false
     private var lastScrollDelta: CGPoint = .zero
+    private var momentumStartTime: Date?
+    private var scrollTimeThreshold: TimeInterval = 0.1
     
     // Add the movement threshold property
     private let movementThreshold: CGFloat = 3.0
@@ -75,6 +82,14 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     // Add the touchIDCounter for generating unique touch IDs
     private var touchIDCounter: Int = 1
     
+    // Timer for cleaning up stale touches
+    private var touchCleanupTimer: Timer?
+    
+    // Right-click detection
+    private var rightClickDetectionTimer: Timer?
+    private var potentialRightClickTouches: [NSTouch] = []
+    private let rightClickThreshold: TimeInterval = 0.3
+    
     // MARK: - Initialization
     override init() {
         super.init()
@@ -84,10 +99,12 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         // Don't start monitoring in init - wait for explicit call
         detectTrackpadBounds()
         
-        // Set up the responder chain
-        NSApp.windows.forEach { window in
-            window.contentView?.allowedTouchTypes = [.direct, .indirect]
-            window.contentView?.nextResponder = self
+        // Set up the responder chain for all windows
+        setupResponderChain()
+        
+        // Configure the touch cleanup timer - runs every 0.5 seconds
+        touchCleanupTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.cleanupStaleTouches()
         }
     }
     
@@ -97,300 +114,505 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     
     deinit {
         stopMonitoring()
+        touchCleanupTimer?.invalidate()
+        rightClickDetectionTimer?.invalidate()
+    }
+    
+    private func setupResponderChain() {
+        // Set up the responder chain for all windows
+        NSApp.windows.forEach { window in
+            // Allow both direct and indirect touches
+            window.contentView?.allowedTouchTypes = [.direct, .indirect]
+            window.contentView?.nextResponder = self
+        }
+        
+        // Add notification observer for new windows
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let window = notification.object as? NSWindow {
+                window.contentView?.allowedTouchTypes = [.direct, .indirect]
+                window.contentView?.nextResponder = self
+            }
+        }
     }
     
     // MARK: - Touch Event Handling
     
     override func touchesBegan(with event: NSEvent) {
         super.touchesBegan(with: event)
-        handleTouchesBeganEvent(event)
+        
+        guard isMonitoring else { return }
+        
+        if let touches = event.allTouches() {
+            processTouchesBeganEvent(touches: touches)
+        }
     }
     
     override func touchesMoved(with event: NSEvent) {
         super.touchesMoved(with: event)
-        handleTouchesMovedEvent(event)
+        
+        guard isMonitoring else { return }
+        
+        if let touches = event.allTouches() {
+            processTouchesMovedEvent(touches: touches)
+        }
     }
     
     override func touchesEnded(with event: NSEvent) {
         super.touchesEnded(with: event)
-        handleTouchesEndedEvent(event)
+        
+        guard isMonitoring else { return }
+        
+        if let touches = event.allTouches() {
+            processTouchesEndedEvent(touches: touches)
+        }
     }
     
     override func touchesCancelled(with event: NSEvent) {
         super.touchesCancelled(with: event)
-        handleTouchesCancelledEvent(event)
-    }
-    
-    // MARK: - Touch Event Notification Handlers
-    
-    private func handleTouchesBeganEvent(_ event: NSEvent) {
-        processTouchEvent(event: event)
-    }
-    
-    private func handleTouchesMovedEvent(_ event: NSEvent) {
-        processTouchEvent(event: event)
-    }
-    
-    private func handleTouchesEndedEvent(_ event: NSEvent) {
-        processTouchEvent(event: event)
-    }
-    
-    private func handleTouchesCancelledEvent(_ event: NSEvent) {
-        processTouchEvent(event: event)
-    }
-    
-    private func processTouchEvent(event: NSEvent) {
-        // Get touches from the event
-        let touches = event.touches(matching: .any, in: nil) 
         
-        // Create FingerTouch objects from NSTouch objects
-        var fingerTouches: [FingerTouch] = []
+        guard isMonitoring else { return }
         
-        for nsTouch in touches {
-            // Generate a unique identifier for this touch
-            let identityString = "\(UInt(bitPattern: ObjectIdentifier(nsTouch.identity).hashValue))"
+        if let touches = event.allTouches() {
+            processTouchesEndedEvent(touches: touches)
+        }
+    }
+    
+    private func processTouchesBeganEvent(touches: Set<NSTouch>) {
+        // Update raw touches for visualization
+        DispatchQueue.main.async {
+            self.rawTouches = Array(touches)
+        }
+        
+        // Process new touches
+        var newTouches: [FingerTouch] = []
+        
+        for touch in touches {
+            let identity = touch.identity.description
             
-            // Convert NSTouch phase to our EventPhase
-            let phase = convertNSTouchPhaseToEventPhase(nsTouchPhase: nsTouch.phase)
+            // Only process touches that aren't already being tracked
+            if touchIdentityMap[identity] == nil {
+                let fingerTouch = createFingerTouchFromNSTouch(nsTouch: touch)
+                touchIdentityMap[identity] = fingerTouch
+                newTouches.append(fingerTouch)
+            }
+        }
+        
+        // If we have exactly two touches that just began, start a timer for right-click detection
+        if touches.count == 2 && newTouches.count == 2 {
+            potentialRightClickTouches = Array(touches)
+            rightClickDetectionTimer?.invalidate()
+            rightClickDetectionTimer = Timer.scheduledTimer(withTimeInterval: rightClickThreshold, repeats: false) { [weak self] _ in
+                self?.checkForRightClick()
+            }
+        } else {
+            // More than two touches, cancel right-click detection
+            rightClickDetectionTimer?.invalidate()
+            potentialRightClickTouches.removeAll()
+        }
+        
+        if !newTouches.isEmpty {
+            // Notify delegate
+            delegate?.trackpadTouchesBegan(touches: newTouches)
             
-            // If touch is ending, send the event and remove from our tracking map
-            if phase == .ended || phase == .cancelled {
-                if let existingTouch = touchIdentityMap[identityString] {
-                    let touches = [existingTouch]
-                    delegate?.trackpadTouchesEnded(touches: touches)
-                    touchIdentityMap.removeValue(forKey: identityString)
+            // Create and publish event
+            let touchEvent = InputEvent.trackpadTouchEvent(touches: newTouches)
+            
+            DispatchQueue.main.async {
+                self.currentEvents.append(touchEvent)
+            }
+        }
+    }
+    
+    private func processTouchesMovedEvent(touches: Set<NSTouch>) {
+        // Update raw touches for visualization
+        DispatchQueue.main.async {
+            self.rawTouches = Array(touches)
+        }
+        
+        // Process touch movements
+        var updatedTouches: [FingerTouch] = []
+        
+        for touch in touches {
+            let identity = touch.identity.description
+            
+            if var fingerTouch = touchIdentityMap[identity] {
+                // Update position
+                fingerTouch.position = touch.normalizedPosition
+                fingerTouch.pressure = 1.0  // Default pressure since supportsPressure is not available
+                fingerTouch.timestamp = Date()
+                
+                touchIdentityMap[identity] = fingerTouch
+                updatedTouches.append(fingerTouch)
+            }
+        }
+        
+        // If we have potential right-click touches, check if they've moved too much
+        if !potentialRightClickTouches.isEmpty && rightClickDetectionTimer != nil {
+            let currentTouches = Array(touches)
+            
+            // Check if the touches have moved significantly
+            var hasMoved = false
+            for i in 0..<min(potentialRightClickTouches.count, currentTouches.count) {
+                let originalPos = potentialRightClickTouches[i].normalizedPosition
+                let currentPos = currentTouches[i].normalizedPosition
+                
+                let distance = hypot(originalPos.x - currentPos.x, originalPos.y - currentPos.y)
+                if distance > 0.02 { // Small threshold for movement
+                    hasMoved = true
+                    break
                 }
-                continue
             }
             
-            // If this is an existing touch, update our records
-            if let existingTouch = touchIdentityMap[identityString] {
-                fingerTouches.append(existingTouch)
-            } else {
-                // This is a new touch, create a new FingerTouch
-                let fingerTouch = createFingerTouchFromNSTouch(nsTouch: nsTouch)
-                touchIdentityMap[identityString] = fingerTouch
-                fingerTouches.append(fingerTouch)
+            if hasMoved {
+                // Cancel right-click detection if touches moved too much
+                rightClickDetectionTimer?.invalidate()
+                rightClickDetectionTimer = nil
+                potentialRightClickTouches.removeAll()
             }
         }
         
-        // Notify delegate of the touches
-        if !fingerTouches.isEmpty {
-            delegate?.trackpadTouchesBegan(touches: fingerTouches)
+        // Detect gestures based on touch movements
+        if updatedTouches.count >= 2 {
+            detectGesture(touches: updatedTouches)
         }
+    }
+    
+    private func processTouchesEndedEvent(touches: Set<NSTouch>) {
+        // Find touches that have ended
+        var removedIdentities: [String] = []
+        
+        // First, identify touches that have ended
+        for touch in touches {
+            let identity = touch.identity.description
+            
+            if touch.phase == .ended || touch.phase == .cancelled {
+                removedIdentities.append(identity)
+            }
+        }
+        
+        // Update raw touches for visualization - keep only active touches
+        DispatchQueue.main.async {
+            self.rawTouches = Array(touches).filter { $0.phase != .ended && $0.phase != .cancelled }
+        }
+        
+        if !removedIdentities.isEmpty {
+            var endedTouchList: [FingerTouch] = []
+            
+            for identity in removedIdentities {
+                if let touch = touchIdentityMap[identity] {
+                    endedTouchList.append(touch)
+                }
+                touchIdentityMap.removeValue(forKey: identity)
+            }
+            
+            if !endedTouchList.isEmpty {
+                delegate?.trackpadTouchesEnded(touches: endedTouchList)
+            }
+        }
+        
+        // If all touches have ended, cancel right-click detection
+        if touchIdentityMap.isEmpty {
+            rightClickDetectionTimer?.invalidate()
+            rightClickDetectionTimer = nil
+            potentialRightClickTouches.removeAll()
+        }
+    }
+    
+    private func checkForRightClick() {
+        // If we still have exactly two touches that haven't moved much, trigger a right-click
+        if potentialRightClickTouches.count == 2 && touchIdentityMap.count == 2 {
+            // Convert to finger touches
+            let fingerTouches = potentialRightClickTouches.map { createFingerTouchFromNSTouch(nsTouch: $0) }
+            
+            // Create a right-click gesture
+            let gesture = TrackpadGesture(
+                type: .tap(count: 2),
+                touches: fingerTouches,
+                magnitude: 1.0,
+                rotation: nil,
+                isMomentumScroll: false
+            )
+            
+            // Publish the right-click gesture
+            publishGestureEvent(gesture)
+            
+            Logger.debug("Detected right-click (two-finger tap)", log: Logger.trackpad)
+        }
+        
+        // Clear the potential right-click state
+        potentialRightClickTouches.removeAll()
+        rightClickDetectionTimer = nil
     }
     
     private func createFingerTouchFromNSTouch(nsTouch: NSTouch) -> FingerTouch {
-        // Create a FingerTouch from an NSTouch with reasonable defaults
+        // Create a FingerTouch with accurate properties
         return FingerTouch(
             id: nextTouchID(),
-            position: nsTouch.normalizedPosition, // Use the normalized position directly
-            pressure: 1.0, // Default pressure as NSTouch doesn't provide this
-            majorRadius: 10.0, // Default radius
-            minorRadius: 10.0, // Default radius
-            fingerType: .unknown // Default finger type
+            position: nsTouch.normalizedPosition,
+            pressure: 1.0,  // Default pressure since supportsPressure is not available
+            majorRadius: 10.0,
+            minorRadius: 10.0,
+            fingerType: .unknown,
+            timestamp: Date()
         )
     }
     
-    private func nextTouchID() -> Int {
-        let id = touchIDCounter
-        touchIDCounter += 1
-        return id
-    }
-    
-    // MARK: - Event Processing
-    
-    private func processGestures(event: NSEvent) {
-        // Process different gesture types
-        switch event.type {
-        case .gesture:
-            // Handle gesture events based on event type
-            let eventType = event.type.rawValue
-            if eventType == 29 { // NSEvent.EventType.gesture.rawValue
-                // Pinch gesture (zoom)
-                detectPinchGesture(event: event)
-            } else if eventType == 30 { // NSEvent.EventType.magnify.rawValue
-                // Rotation gesture
-                detectRotationGesture(event: event)
-            } else if eventType == 31 { // NSEvent.EventType.swipe.rawValue
-                // Swipe gesture
-                detectSwipeGesture(event: event)
-            } else if eventType == 34 { // NSEvent.EventType.pressure.rawValue
-                // Pressure gesture (Force Touch)
-                detectPressureGesture(event: event)
+    private func detectGesture(touches: [FingerTouch]) {
+        // Skip if we don't have enough history
+        if previousTouches.isEmpty {
+            previousTouches = touches
+            return
+        }
+        
+        // Calculate movement vectors between current and previous touches
+        var totalDeltaX: CGFloat = 0
+        var totalDeltaY: CGFloat = 0
+        var totalDistance: CGFloat = 0
+        var matchedTouches = 0
+        
+        // Match touches by ID and calculate movement
+        for currentTouch in touches {
+            if let previousIndex = previousTouches.firstIndex(where: { $0.id == currentTouch.id }) {
+                let previousTouch = previousTouches[previousIndex]
+                
+                let deltaX = currentTouch.position.x - previousTouch.position.x
+                let deltaY = currentTouch.position.y - previousTouch.position.y
+                let distance = hypot(deltaX, deltaY)
+                
+                totalDeltaX += deltaX
+                totalDeltaY += deltaY
+                totalDistance += distance
+                matchedTouches += 1
             }
-        case .magnify:
-            detectPinchGesture(event: event)
-        case .swipe:
-            detectSwipeGesture(event: event)
-        case .pressure:
-            detectPressureGesture(event: event)
-        case .scrollWheel:
-            // Scroll gesture
-            processScrollEvent(event: event)
-        default:
-            break
         }
+        
+        // Reduce threshold for more sensitive gesture detection
+        let adjustedThreshold = movementThreshold * 0.5 * CGFloat(matchedTouches)
+        
+        // Only process if we have matched touches and significant movement
+        if matchedTouches > 0 && (
+            // Either significant movement or multi-touch (which might be a static gesture)
+            totalDistance > adjustedThreshold || touches.count >= 2
+        ) {
+            // Average the deltas
+            let avgDeltaX = totalDeltaX / CGFloat(matchedTouches)
+            let avgDeltaY = totalDeltaY / CGFloat(matchedTouches)
+            
+            // Determine gesture type based on touch count and movement
+            let gestureType: TrackpadGesture.GestureType
+            
+            // Check for pinch/zoom gesture
+            if touches.count == 2 {
+                let touch1 = touches[0]
+                let touch2 = touches[1]
+                
+                // Calculate distance between touches
+                let currentDistance = hypot(touch1.position.x - touch2.position.x, 
+                                           touch1.position.y - touch2.position.y)
+                
+                // Find corresponding previous touches
+                if let prevTouch1 = previousTouches.first(where: { $0.id == touch1.id }),
+                   let prevTouch2 = previousTouches.first(where: { $0.id == touch2.id }) {
+                    
+                    let previousDistance = hypot(prevTouch1.position.x - prevTouch2.position.x,
+                                                prevTouch1.position.y - prevTouch2.position.y)
+                    
+                    // Calculate rotation
+                    let currentAngle = atan2(touch2.position.y - touch1.position.y,
+                                            touch2.position.x - touch1.position.x)
+                    let previousAngle = atan2(prevTouch2.position.y - prevTouch1.position.y,
+                                             prevTouch2.position.x - prevTouch1.position.x)
+                    let rotation = currentAngle - previousAngle
+                    
+                    // Lower thresholds for better gesture detection
+                    let distanceDelta = abs(currentDistance - previousDistance)
+                    let rotationDelta = abs(rotation)
+                    
+                    // Check for pinch with reduced threshold
+                    if distanceDelta > 0.005 && distanceDelta > rotationDelta * 0.3 {
+                        // This is primarily a pinch gesture
+                        let isPinchIn = currentDistance < previousDistance
+                        let magnitude = min(1.0, distanceDelta * 15) // Increased multiplier for better visibility
+                        
+                        gestureType = .pinch
+                        
+                        // Create and publish pinch gesture
+                        let gesture = TrackpadGesture(
+                            type: gestureType,
+                            touches: touches,
+                            magnitude: magnitude,
+                            rotation: nil,
+                            isMomentumScroll: false
+                        )
+                        
+                        publishGestureEvent(gesture)
+                        Logger.debug("Detected pinch gesture: \(isPinchIn ? "in" : "out"), magnitude: \(magnitude)", log: Logger.trackpad)
+                        
+                    // Check for rotation with reduced threshold
+                    } else if rotationDelta > 0.03 && rotationDelta > distanceDelta * 1.5 {
+                        // This is primarily a rotation gesture
+                        let magnitude = min(1.0, rotationDelta * 1.5) // Increased multiplier
+                        
+                        gestureType = .rotate
+                        
+                        // Create and publish rotation gesture
+                        let gesture = TrackpadGesture(
+                            type: gestureType,
+                            touches: touches,
+                            magnitude: magnitude,
+                            rotation: rotation,
+                            isMomentumScroll: false
+                        )
+                        
+                        publishGestureEvent(gesture)
+                        Logger.debug("Detected rotation gesture: \(rotation), magnitude: \(magnitude)", log: Logger.trackpad)
+                        
+                    // Reduced threshold for swipe detection
+                    } else if totalDistance > adjustedThreshold {
+                        // This is a two-finger swipe
+                        detectSwipeGesture(deltaX: avgDeltaX, deltaY: avgDeltaY, touches: touches)
+                    }
+                }
+            } else if touches.count >= 3 {
+                // Multi-finger swipe with reduced threshold
+                detectSwipeGesture(deltaX: avgDeltaX, deltaY: avgDeltaY, touches: touches)
+            }
+        }
+        
+        // Update previous touches for next comparison
+        previousTouches = touches
     }
     
-    // MARK: - Gesture Detection
-    
-    private func detectTapGesture(event: NSEvent, touches: [FingerTouch]) {
-        // Simple tap detection
+    private func detectSwipeGesture(deltaX: CGFloat, deltaY: CGFloat, touches: [FingerTouch]) {
+        // Determine primary direction
+        var swipeDirection: TrackpadGesture.GestureType.SwipeDirection
+        if abs(deltaX) > abs(deltaY) {
+            swipeDirection = deltaX > 0 ? .right : .left
+        } else {
+            swipeDirection = deltaY > 0 ? .up : .down
+        }
+        
+        // Log the direction for debugging
+        Logger.debug("Swipe direction: \(swipeDirection)", log: Logger.trackpad)
+        
+        // Calculate magnitude based on distance
+        let distance = hypot(deltaX, deltaY)
+        let magnitude = min(1.0, distance * 5)
+        
+        // Create swipe gesture with finger count
+        let gestureType = TrackpadGesture.GestureType.swipe(direction: swipeDirection)
+        
+        // Create and publish swipe gesture
         let gesture = TrackpadGesture(
-            type: .tap(count: touches.count),
+            type: gestureType,
             touches: touches,
-            magnitude: 1.0, // Default magnitude for tap
-            rotation: nil,
-            isMomentumScroll: false
-        )
-        
-        delegate?.trackpadMonitorDidDetectGesture(gesture)
-    }
-    
-    private func detectSwipeGesture(event: NSEvent) {
-        // Get the swipe direction
-        var direction: TrackpadGesture.GestureType.SwipeDirection = .right
-        
-        // Determine swipe direction based on event
-        if event.deltaX > 0 {
-            direction = .right
-        } else if event.deltaX < 0 {
-            direction = .left
-        } else if event.deltaY > 0 {
-            direction = .up
-        } else if event.deltaY < 0 {
-            direction = .down
-        }
-        
-        // Create the gesture with empty touches array (as we don't have touch info from swipe events)
-        let gesture = TrackpadGesture(
-            type: .swipe(direction: direction),
-            touches: [],
-            magnitude: 1.0, // Default magnitude for swipe
-            rotation: nil,
-            isMomentumScroll: false
-        )
-        
-        delegate?.trackpadMonitorDidDetectGesture(gesture)
-    }
-    
-    private func processScrollEvent(event: NSEvent) {
-        Logger.debug("Scroll event detected: \(String(describing: event))", log: Logger.trackpad)
-        
-        // Determine if this is a momentum scroll
-        let isMomentumScroll = event.momentumPhase != []
-        
-        // Calculate scroll direction and magnitude
-        let deltaX = event.scrollingDeltaX
-        let deltaY = event.scrollingDeltaY
-        let magnitude = sqrt(deltaX * deltaX + deltaY * deltaY)
-        
-        // Create empty touches array since scroll events don't have touch data
-        let emptyTouches: [FingerTouch] = []
-        
-        // Create the gesture
-        let gesture = TrackpadGesture(
-            type: .scroll(fingerCount: event.buttonNumber + 1, deltaX: deltaX, deltaY: deltaY),
-            touches: emptyTouches,
             magnitude: magnitude,
             rotation: nil,
-            isMomentumScroll: isMomentumScroll
-        )
-        
-        // Notify delegate
-        delegate?.trackpadMonitorDidDetectGesture(gesture)
-    }
-    
-    private func detectPinchGesture(event: NSEvent) {
-        // Create the gesture
-        let gesture = TrackpadGesture(
-            type: .pinch,
-            touches: [],
-            magnitude: CGFloat(event.magnification * 10), // Scale the magnification
-            rotation: nil,
             isMomentumScroll: false
         )
         
-        delegate?.trackpadMonitorDidDetectGesture(gesture)
+        publishGestureEvent(gesture)
+        Logger.debug("Detected \(touches.count)-finger swipe \(swipeDirection), magnitude: \(magnitude)", log: Logger.trackpad)
     }
     
-    private func detectRotationGesture(event: NSEvent) {
-        // Create the gesture
-        let gesture = TrackpadGesture(
-            type: .rotate,
-            touches: [],
-            magnitude: 1.0, // Default magnitude
-            rotation: CGFloat(event.rotation),
-            isMomentumScroll: false
-        )
+    private func cleanupStaleTouches() {
+        let now = Date()
+        let staleThreshold: TimeInterval = 1.0 // 1 second
         
-        delegate?.trackpadMonitorDidDetectGesture(gesture)
-    }
-    
-    private func detectPressureGesture(event: NSEvent) {
-        // Handle force touch / pressure gestures if needed
-        // This is a placeholder for force touch handling
-    }
-    
-    // MARK: - Setup Methods
-    
-    private func setupTrackpad() {
-        // Enable trackpad gesture events
-        NSEvent.addLocalMonitorForEvents(matching: .gesture) { (event) -> NSEvent? in
-            self.processGestures(event: event)
-            return event
+        // Remove touches that haven't been updated in a while
+        var staleTouchIdentities: [String] = []
+        
+        for (identity, touch) in touchIdentityMap {
+            if let timestamp = touch.timestamp, now.timeIntervalSince(timestamp) > staleThreshold {
+                staleTouchIdentities.append(identity)
+            }
         }
         
-        // Enable trackpad touch events
-        NSEvent.addLocalMonitorForEvents(matching: [.directTouch, .pressure]) { [weak self] (event) -> NSEvent? in
-            guard let self = self else { return event }
-            
-            // Process touch events
-            switch event.type {
-            case .directTouch:
-                // Direct touch event
-                self.processTouchEvent(event: event)
-            default:
-                break
+        if !staleTouchIdentities.isEmpty {
+            for identity in staleTouchIdentities {
+                touchIdentityMap.removeValue(forKey: identity)
             }
             
-            return event
+            // Update raw touches
+            DispatchQueue.main.async {
+                self.rawTouches = self.rawTouches.filter { touch in
+                    !staleTouchIdentities.contains(touch.identity.description)
+                }
+            }
+            
+            Logger.debug("Cleaned up \(staleTouchIdentities.count) stale touches", log: Logger.trackpad)
         }
     }
     
-    private func detectTrackpadBounds() {
-        // Use screen bounds as a proxy for trackpad bounds initially
-        if let screen = NSScreen.main {
-            trackpadBounds = CGRect(x: 0, y: 0, width: screen.frame.width, height: screen.frame.height)
-            Logger.debug("Using screen bounds as trackpad proxy: \(trackpadBounds)", log: Logger.trackpad)
-        } else {
-            trackpadBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
-            Logger.debug("No screen available, using default trackpad bounds", log: Logger.trackpad)
+    private func publishGestureEvent(_ gesture: TrackpadGesture) {
+        delegate?.trackpadMonitorDidDetectGesture(gesture)
+        
+        let gestureEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+        
+        DispatchQueue.main.async {
+            // Replace any existing gesture of the same type
+            var events = self.currentEvents
+            
+            // Filter out old gestures of the same type
+            if case .swipe = gesture.type {
+                events = events.filter { event in
+                    if let eventGesture = event.trackpadGesture {
+                        if case .swipe = eventGesture.type {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            } else if case .pinch = gesture.type {
+                events = events.filter { event in
+                    if let eventGesture = event.trackpadGesture {
+                        if case .pinch = eventGesture.type {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            } else if case .rotate = gesture.type {
+                events = events.filter { event in
+                    if let eventGesture = event.trackpadGesture {
+                        if case .rotate = eventGesture.type {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            } else if case .tap = gesture.type {
+                events = events.filter { event in
+                    if let eventGesture = event.trackpadGesture {
+                        if case .tap = eventGesture.type {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            } else if case .scroll = gesture.type {
+                events = events.filter { event in
+                    if let eventGesture = event.trackpadGesture {
+                        if case .scroll = eventGesture.type {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            }
+            
+            // Add the new gesture event
+            events.append(gestureEvent)
+            self.currentEvents = events
         }
     }
     
-    func startMonitoring() {
-        isMonitoring = true
-        Logger.info("Trackpad monitoring started", log: Logger.trackpad)
-    }
-    
-    func stopMonitoring() {
-        isMonitoring = false
-        Logger.info("Trackpad monitoring stopped", log: Logger.trackpad)
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func allTouches() -> [FingerTouch] {
-        return Array(touchIdentityMap.values)
-    }
-    
-    // Add the convertNSTouchPhaseToEventPhase method
     private func convertNSTouchPhaseToEventPhase(nsTouchPhase: NSTouch.Phase) -> EventPhase {
         switch nsTouchPhase {
-        case .touching:
-            return .began
         case .began:
             return .began
         case .moved:
@@ -401,17 +623,122 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             return .ended
         case .cancelled:
             return .cancelled
+        case .touching:
+            return .moved
         default:
             return .unknown
         }
     }
     
+    private func nextTouchID() -> Int {
+        let id = touchIDCounter
+        touchIDCounter += 1
+        return id
+    }
+    
+    // MARK: - Scroll Wheel Event Processing
+    
     override func scrollWheel(with event: NSEvent) {
-        Logger.debug("Scroll event detected", log: Logger.trackpad)
+        super.scrollWheel(with: event)
+        processScrollEvent(event: event)
+    }
+    
+    private func processScrollEvent(event: NSEvent) {
+        // Get deltas and phase information
+        let deltaX = event.scrollingDeltaX
+        let deltaY = event.scrollingDeltaY
+        let phase = event.phase
+        let momentumPhase = event.momentumPhase
         
-        if event.phase == .began || event.phase == .changed || event.phase == .ended || event.momentumPhase != [] {
-            processScrollEvent(event: event)
+        // Check if this is momentum scrolling
+        let isMomentum = phase.isEmpty && !momentumPhase.isEmpty
+        
+        // Only process if there's actual movement
+        if abs(deltaX) > 0.01 || abs(deltaY) > 0.01 {
+            // Determine direction
+            var swipeDirection: TrackpadGesture.GestureType.SwipeDirection
+            if abs(deltaX) > abs(deltaY) {
+                swipeDirection = deltaX > 0 ? .right : .left
+            } else {
+                swipeDirection = deltaY > 0 ? .up : .down
+            }
+            
+            // Log the direction for debugging
+            Logger.debug("Swipe direction: \(swipeDirection)", log: Logger.trackpad)
+            
+            // Create finger touch array with center position
+            let centerPosition = CGPoint(x: 0.5, y: 0.5)
+            let fingerTouch = FingerTouch(
+                id: -1, // Special ID for scroll event
+                position: centerPosition,
+                pressure: 1.0,
+                majorRadius: 10.0,
+                minorRadius: 10.0,
+                fingerType: .unknown,
+                timestamp: Date()
+            )
+            
+            // Use two finger touches for 2-finger scroll representation
+            let touches = [fingerTouch]
+            
+            // Create gesture
+            let gesture = TrackpadGesture(
+                type: .scroll(fingerCount: 2, deltaX: deltaX, deltaY: deltaY),
+                touches: touches,
+                magnitude: min(1.0, sqrt(deltaX*deltaX + deltaY*deltaY) * 0.1),
+                rotation: nil,
+                isMomentumScroll: isMomentum
+            )
+            
+            // Publish gesture event
+            publishGestureEvent(gesture)
         }
+    }
+    
+    // MARK: - Trackpad Setup
+    
+    private func setupTrackpad() {
+        // Configure for trackpad events
+    }
+    
+    func startMonitoring() {
+        guard !isMonitoring else {
+            Logger.debug("Trackpad monitoring already active", log: Logger.trackpad)
+            return
+        }
+        
+        // Clear any existing state
+        touchIdentityMap.removeAll()
+        previousTouches.removeAll()
+        currentEvents.removeAll()
+        rawTouches.removeAll()
+        
+        // Capture the trackpad bounds
+        detectTrackpadBounds()
+        
+        // Ensure we're in the responder chain
+        setupResponderChain()
+        
+        isMonitoring = true
+        Logger.info("Trackpad monitoring started", log: Logger.trackpad)
+    }
+    
+    func stopMonitoring() {
+        isMonitoring = false
+        Logger.info("Trackpad monitoring stopped", log: Logger.trackpad)
+        
+        // Clear state
+        DispatchQueue.main.async {
+            self.touchIdentityMap.removeAll()
+            self.previousTouches.removeAll()
+            self.currentEvents.removeAll()
+            self.rawTouches.removeAll()
+        }
+    }
+    
+    private func detectTrackpadBounds() {
+        // Use default trackpad size for now
+        trackpadBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
     }
 }
 
@@ -426,14 +753,9 @@ extension TrackpadGesture.GestureType.SwipeDirection: CustomStringConvertible {
     }
 }
 
-// TrackpadGesture is now defined in InputEvent.swift with the isMomentumScroll property
-// ... existing code ... 
-
 // Add the extension for NSEvent to get all touches
 extension NSEvent {
     func allTouches() -> Set<NSTouch>? {
         return self.touches(matching: .touching, in: nil)
     }
 }
-
-// ... existing code ... 

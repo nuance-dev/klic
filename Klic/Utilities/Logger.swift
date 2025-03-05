@@ -17,6 +17,10 @@ class Logger {
         os_log("%{public}s", log: log, type: .info, message)
     }
     
+    static func warning(_ message: String, log: OSLog = app) {
+        os_log("%{public}s", log: log, type: .default, message)
+    }
+    
     static func error(_ message: String, log: OSLog = app) {
         os_log("%{public}s", log: log, type: .error, message)
     }

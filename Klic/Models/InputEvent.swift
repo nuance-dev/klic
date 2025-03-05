@@ -15,15 +15,16 @@ enum InputEventType {
 }
 
 /// Represents a finger touch on the trackpad
-struct FingerTouch: Hashable {
+struct FingerTouch: Hashable, Equatable {
     let id: Int
-    let position: CGPoint
-    let pressure: CGFloat
-    let majorRadius: CGFloat
-    let minorRadius: CGFloat
-    let fingerType: FingerType
+    var position: CGPoint
+    var pressure: CGFloat
+    var majorRadius: CGFloat
+    var minorRadius: CGFloat
+    var fingerType: FingerType
+    var timestamp: Date?
     
-    enum FingerType {
+    enum FingerType: String {
         case thumb
         case index
         case middle
@@ -42,43 +43,51 @@ struct FingerTouch: Hashable {
     }
 }
 
+/// Represents a mouse button
+enum MouseButton: String, Equatable {
+    case left
+    case right
+    case middle
+    case extra1
+    case extra2
+    case other
+}
+
 /// Represents a mouse event
-struct MouseEvent {
+struct MouseEvent: Equatable {
     let position: CGPoint
     let button: MouseButton?
     let scrollDelta: CGPoint?
-    let speed: CGFloat
+    let isDown: Bool
+    let isDoubleClick: Bool
+    let isMomentumScroll: Bool
     
-    enum MouseButton {
-        case left
-        case right
-        case middle
-        case extra1
-        case extra2
+    init(position: CGPoint, button: MouseButton? = nil, scrollDelta: CGPoint? = nil, isDown: Bool = false, isDoubleClick: Bool = false, isMomentumScroll: Bool = false) {
+        self.position = position
+        self.button = button
+        self.scrollDelta = scrollDelta
+        self.isDown = isDown
+        self.isDoubleClick = isDoubleClick
+        self.isMomentumScroll = isMomentumScroll
     }
 }
 
 /// Represents a keyboard event
-struct KeyboardEvent {
+struct KeyboardEvent: Equatable {
+    let key: String
     let keyCode: Int
+    let isDown: Bool
+    let modifiers: [KeyModifier]
     let characters: String?
-    let modifiers: ModifierKeys
     let isRepeat: Bool
     
-    struct ModifierKeys: OptionSet {
-        let rawValue: Int
-        
-        static let command = ModifierKeys(rawValue: 1 << 0)
-        static let shift = ModifierKeys(rawValue: 1 << 1)
-        static let option = ModifierKeys(rawValue: 1 << 2)
-        static let control = ModifierKeys(rawValue: 1 << 3)
-        static let function = ModifierKeys(rawValue: 1 << 4)
-        static let capsLock = ModifierKeys(rawValue: 1 << 5)
+    var isModifierKey: Bool {
+        return KeyModifier.allCases.contains { $0.keyCode == keyCode }
     }
 }
 
 /// Represents a trackpad gesture
-struct TrackpadGesture {
+struct TrackpadGesture: Equatable {
     let type: GestureType
     let touches: [FingerTouch]
     let magnitude: CGFloat
@@ -93,14 +102,14 @@ struct TrackpadGesture {
         self.isMomentumScroll = isMomentumScroll
     }
     
-    enum GestureType {
+    enum GestureType: Equatable {
         case pinch
         case rotate
         case swipe(direction: SwipeDirection)
         case tap(count: Int)
         case scroll(fingerCount: Int, deltaX: CGFloat, deltaY: CGFloat)
         
-        enum SwipeDirection {
+        enum SwipeDirection: String {
             case up
             case down
             case left
@@ -110,57 +119,103 @@ struct TrackpadGesture {
 }
 
 /// The main input event model that encapsulates all types of input events
-struct InputEvent: Identifiable {
-    let id = UUID()
+struct InputEvent: Identifiable, Equatable {
+    let id: UUID
     let timestamp: Date
-    let type: InputEventType
+    let type: EventType
+    
+    // Event-specific data
     let keyboardEvent: KeyboardEvent?
     let mouseEvent: MouseEvent?
-    let trackpadTouches: [FingerTouch]?
     let trackpadGesture: TrackpadGesture?
+    let trackpadTouches: [FingerTouch]?
     
-    // Convenience initializers for different event types
-    static func keyEvent(type: InputEventType, keyCode: Int, characters: String?, modifiers: KeyboardEvent.ModifierKeys, isRepeat: Bool) -> InputEvent {
-        InputEvent(
+    // MARK: - Event Types
+    
+    enum EventType: String {
+        case keyboard
+        case mouse
+        case trackpadGesture
+        case trackpadTouch
+    }
+    
+    // MARK: - Factory Methods
+    
+    static func keyboardEvent(key: String, keyCode: Int, isDown: Bool, modifiers: [KeyModifier], characters: String? = nil, isRepeat: Bool = false) -> InputEvent {
+        let event = KeyboardEvent(key: key, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
+        return InputEvent(
+            id: UUID(),
             timestamp: Date(),
-            type: type,
-            keyboardEvent: KeyboardEvent(keyCode: keyCode, characters: characters, modifiers: modifiers, isRepeat: isRepeat),
+            type: .keyboard,
+            keyboardEvent: event,
             mouseEvent: nil,
-            trackpadTouches: nil,
-            trackpadGesture: nil
+            trackpadGesture: nil,
+            trackpadTouches: nil
         )
     }
     
-    static func mouseEvent(type: InputEventType, position: CGPoint, button: MouseEvent.MouseButton? = nil, scrollDelta: CGPoint? = nil, speed: CGFloat = 0) -> InputEvent {
-        InputEvent(
+    static func mouseEvent(type: InputEventType, position: CGPoint, button: MouseButton? = nil, scrollDelta: CGPoint? = nil, isDown: Bool = false, isDoubleClick: Bool = false, isMomentumScroll: Bool = false) -> InputEvent {
+        let event = MouseEvent(position: position, button: button, scrollDelta: scrollDelta, isDown: isDown, isDoubleClick: isDoubleClick, isMomentumScroll: isMomentumScroll)
+        return InputEvent(
+            id: UUID(),
             timestamp: Date(),
-            type: type,
+            type: .mouse,
             keyboardEvent: nil,
-            mouseEvent: MouseEvent(position: position, button: button, scrollDelta: scrollDelta, speed: speed),
-            trackpadTouches: nil,
-            trackpadGesture: nil
-        )
-    }
-    
-    static func trackpadTouchEvent(touches: [FingerTouch]) -> InputEvent {
-        InputEvent(
-            timestamp: Date(),
-            type: .trackpadTouch,
-            keyboardEvent: nil,
-            mouseEvent: nil,
-            trackpadTouches: touches,
-            trackpadGesture: nil
+            mouseEvent: event,
+            trackpadGesture: nil,
+            trackpadTouches: nil
         )
     }
     
     static func trackpadGestureEvent(gesture: TrackpadGesture) -> InputEvent {
-        InputEvent(
+        return InputEvent(
+            id: UUID(),
             timestamp: Date(),
             type: .trackpadGesture,
             keyboardEvent: nil,
             mouseEvent: nil,
-            trackpadTouches: gesture.touches,
-            trackpadGesture: gesture
+            trackpadGesture: gesture,
+            trackpadTouches: nil
         )
+    }
+    
+    static func trackpadTouchEvent(touches: [FingerTouch]) -> InputEvent {
+        return InputEvent(
+            id: UUID(),
+            timestamp: Date(),
+            type: .trackpadTouch,
+            keyboardEvent: nil,
+            mouseEvent: nil,
+            trackpadGesture: nil,
+            trackpadTouches: touches
+        )
+    }
+    
+    // MARK: - Equatable
+    
+    static func == (lhs: InputEvent, rhs: InputEvent) -> Bool {
+        return lhs.id == rhs.id
+    }
+}
+
+// MARK: - Supporting Types
+
+enum KeyModifier: String, CaseIterable {
+    case shift
+    case control
+    case option
+    case command
+    case function
+    case capsLock
+    
+    var keyCode: Int {
+        switch self {
+        case .shift: return 56
+        case .control: return 59
+        case .option: return 58
+        case .command: return 55
+        case .function: return 63
+        case .capsLock: return 57
+        }
     }
 } 

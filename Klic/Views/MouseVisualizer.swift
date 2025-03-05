@@ -1,5 +1,22 @@
 import SwiftUI
 
+// MARK: - Supporting Types
+
+enum MouseActionType: Equatable {
+    case click(button: MouseButton, isDoubleClick: Bool)
+    case scroll(direction: ScrollDirection)
+    case momentumScroll(direction: ScrollDirection)
+    case move(isFast: Bool)
+    case none
+}
+
+enum ScrollDirection: Equatable {
+    case up
+    case down
+    case left
+    case right
+}
+
 struct MouseVisualizer: View {
     let events: [InputEvent]
     
@@ -7,17 +24,19 @@ struct MouseVisualizer: View {
     @State private var isAnimating = false
     @State private var pulseOpacity: Double = 0
     
+    @State private var isMinimalMode: Bool = false
+    
     // Get the latest mouse events of each type
     private var clickEvents: [InputEvent] {
-        events.filter { $0.type == .mouseDown }
+        events.filter { $0.type == .mouse && $0.mouseEvent?.button != nil && $0.mouseEvent?.isDown == true }
     }
     
     private var moveEvents: [InputEvent] {
-        events.filter { $0.type == .mouseMove }
+        events.filter { $0.type == .mouse && $0.mouseEvent?.button == nil && $0.mouseEvent?.scrollDelta == nil }
     }
     
     private var scrollEvents: [InputEvent] {
-        events.filter { $0.type == .mouseScroll }
+        events.filter { $0.type == .mouse && $0.mouseEvent?.scrollDelta != nil }
     }
     
     private var latestClickEvent: InputEvent? {
@@ -28,53 +47,89 @@ struct MouseVisualizer: View {
         scrollEvents.first
     }
     
+    private var latestMoveEvent: InputEvent? {
+        moveEvents.first
+    }
+    
     private var mouseActionType: MouseActionType {
+        // First check for clicks as they should have priority
         if let clickEvent = latestClickEvent, let mouseEvent = clickEvent.mouseEvent {
-            return .click(button: mouseEvent.button ?? .left)
-        } else if let scrollEvent = latestScrollEvent, let mouseEvent = scrollEvent.mouseEvent, let delta = mouseEvent.scrollDelta {
+            let button = mouseEvent.button ?? .left
+            let isDoubleClick = mouseEvent.isDoubleClick
+            
+            return .click(button: button, isDoubleClick: isDoubleClick)
+        } 
+        // Then check for scroll events
+        else if let scrollEvent = latestScrollEvent, let mouseEvent = scrollEvent.mouseEvent, let delta = mouseEvent.scrollDelta {
             // Determine primary scroll direction
+            let direction: ScrollDirection
             if abs(delta.y) > abs(delta.x) {
-                return delta.y > 0 ? .scroll(direction: .down) : .scroll(direction: .up)
+                direction = delta.y > 0 ? .down : .up
             } else {
-                return delta.x > 0 ? .scroll(direction: .right) : .scroll(direction: .left)
+                direction = delta.x > 0 ? .right : .left
             }
-        } else if !moveEvents.isEmpty {
-            return .move
+            
+            // Check if this is momentum scrolling
+            if mouseEvent.isMomentumScroll {
+                return .momentumScroll(direction: direction)
+            } else {
+                return .scroll(direction: direction)
+            }
+        } 
+        // Finally check for move events - only if we have them and they're the most recent
+        else if let moveEvent = latestMoveEvent, let _ = moveEvent.mouseEvent {
+            // For simplicity, all movements are considered "slow" as we no longer track speed
+            return .move(isFast: false)
         }
         
         return .none
     }
     
-    // Enum to track mouse action types
-    enum MouseActionType: Equatable {
-        case click(button: MouseEvent.MouseButton)
-        case scroll(direction: ScrollDirection)
-        case move
-        case none
+    var body: some View {
+        // Check for minimal mode on appearance
+        let _ = onAppear {
+            isMinimalMode = UserPreferences.getMinimalDisplayMode()
+            
+            // Listen for minimal mode changes
+            NotificationCenter.default.addObserver(
+                forName: .MinimalDisplayModeChanged,
+                object: nil,
+                queue: .main
+            ) { _ in
+                isMinimalMode = UserPreferences.getMinimalDisplayMode()
+            }
+        }
         
-        enum ScrollDirection: Equatable {
-            case up
-            case down
-            case left
-            case right
+        if events.isEmpty {
+            EmptyView()
+        } else {
+            if isMinimalMode {
+                minimalMouseView
+            } else {
+                standardMouseView
+            }
         }
     }
     
-    var body: some View {
+    // Standard mouse visualization
+    private var standardMouseView: some View {
         ZStack {
             // Only show content when there are events
             if !events.isEmpty {
                 // Dynamic content based on mouse action
                 Group {
                     switch mouseActionType {
-                    case .click(let button):
-                        MouseClickView(button: button, isAnimating: isAnimating)
+                    case .click(let button, let isDoubleClick):
+                        MouseClickView(button: button, isDoubleClick: isDoubleClick, isAnimating: isAnimating)
                             
                     case .scroll(let direction):
-                        MouseScrollView(direction: direction, isAnimating: isAnimating)
+                        MouseScrollView(direction: direction, isMomentum: false, isAnimating: isAnimating)
                             
-                    case .move:
-                        MouseMoveView(isAnimating: isAnimating)
+                    case .momentumScroll(let direction):
+                        MouseScrollView(direction: direction, isMomentum: true, isAnimating: isAnimating)
+                            
+                    case .move(let isFast):
+                        MouseMoveView(isFast: isFast, isAnimating: isAnimating)
                             
                     case .none:
                         // Nothing to display
@@ -98,40 +153,56 @@ struct MouseVisualizer: View {
                                     .fill(Color.black.opacity(0.5))
                                     .overlay(
                                         Capsule()
-                                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
+                                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
                                     )
                             )
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                 }
+                .padding(.bottom, 5)
             }
         }
+        .frame(width: 100, height: 72)
         .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+            withAnimation(.easeIn(duration: 0.3)) {
                 isAnimating = true
             }
+        }
+    }
+    
+    // Minimal mouse visualization
+    private var minimalMouseView: some View {
+        HStack(spacing: 4) {
+            // Mouse icon
+            Image(systemName: mouseActionIcon)
+                .font(.system(size: 10))
+                .foregroundColor(.white)
             
-            // Start pulse animation cycle
-            animatePulse()
+            // Action text
+            Text(minimalActionDescription)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
         }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.black.opacity(0.5))
+        )
     }
     
-    private func animatePulse() {
-        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-            pulseOpacity = 0.7
-        }
-    }
-    
-    // Generate a description of the mouse action
+    // Nice descriptive text for the current action
     private var actionDescription: String {
         switch mouseActionType {
-        case .click(let button):
+        case .click(let button, let isDoubleClick):
+            let clickType = isDoubleClick ? "Double Click" : "Click"
+            
             switch button {
-            case .left: return "Left Click"
-            case .right: return "Right Click"
-            case .middle: return "Middle Click"
-            case .extra1: return "Button 4"
-            case .extra2: return "Button 5"
+            case .left: return "Left \(clickType)"
+            case .right: return "Right \(clickType)"
+            case .middle: return "Middle \(clickType)"
+            case .extra1: return "Back Button"
+            case .extra2: return "Forward Button"
+            case .other: return "Other Button \(clickType)"
             }
             
         case .scroll(let direction):
@@ -142,8 +213,96 @@ struct MouseVisualizer: View {
             case .right: return "Scroll Right"
             }
             
-        case .move:
-            return "Mouse Move"
+        case .momentumScroll(let direction):
+            switch direction {
+            case .up: return "Momentum Up"
+            case .down: return "Momentum Down"
+            case .left: return "Momentum Left"
+            case .right: return "Momentum Right"
+            }
+            
+        case .move(let isFast):
+            return isFast ? "Fast Movement" : "Mouse Move"
+            
+        case .none:
+            return ""
+        }
+    }
+    
+    // Minimal action description
+    private var minimalActionDescription: String {
+        switch mouseActionType {
+        case .click(let button, let isDoubleClick):
+            let doublePrefix = isDoubleClick ? "2×" : ""
+            
+            switch button {
+            case .left: return "\(doublePrefix)Click"
+            case .right: return "\(doublePrefix)Right"
+            case .middle: return "\(doublePrefix)Middle"
+            case .extra1: return "Back"
+            case .extra2: return "Forward"
+            case .other: return "Other Button"
+            }
+            
+        case .scroll(let direction):
+            switch direction {
+            case .up: return "Scroll ↑"
+            case .down: return "Scroll ↓"
+            case .left: return "Scroll ←"
+            case .right: return "Scroll →"
+            }
+            
+        case .momentumScroll(let direction):
+            switch direction {
+            case .up: return "Mom ↑"
+            case .down: return "Mom ↓"
+            case .left: return "Mom ←"
+            case .right: return "Mom →"
+            }
+            
+        case .move(let isFast):
+            return isFast ? "Fast" : "Move"
+            
+        case .none:
+            return ""
+        }
+    }
+    
+    // Mouse icon for minimal mode
+    private var mouseActionIcon: String {
+        switch mouseActionType {
+        case .click(let button, let isDoubleClick):
+            let baseIcon: String
+            
+            switch button {
+            case .left: baseIcon = "mouse.fill"
+            case .right: baseIcon = "mouse.fill"
+            case .middle: baseIcon = "mouse.fill"
+            case .extra1: return "arrow.left.circle.fill"
+            case .extra2: return "arrow.right.circle.fill"
+            case .other: return "questionmark.circle.fill"
+            }
+            
+            return isDoubleClick ? "2.circle" : baseIcon
+            
+        case .scroll(let direction):
+            switch direction {
+            case .up: return "chevron.up"
+            case .down: return "chevron.down"
+            case .left: return "chevron.left"
+            case .right: return "chevron.right"
+            }
+            
+        case .momentumScroll(let direction):
+            switch direction {
+            case .up: return "chevron.up.chevron.up"
+            case .down: return "chevron.down.chevron.down"
+            case .left: return "chevron.left.chevron.left"
+            case .right: return "chevron.right.chevron.right"
+            }
+            
+        case .move(let isFast):
+            return isFast ? "hand.point.up.braille.fill" : "hand.point.up.fill"
             
         case .none:
             return ""
@@ -151,179 +310,242 @@ struct MouseVisualizer: View {
     }
 }
 
-// MARK: - Mouse Action Views
+// MARK: - Subviews for different mouse actions
 
 struct MouseClickView: View {
-    let button: MouseEvent.MouseButton
+    let button: MouseButton
+    let isDoubleClick: Bool
     let isAnimating: Bool
     
-    @State private var clickAnimation = false
-    
-    private var buttonColor: Color {
-        switch button {
-        case .left: return Color.white.opacity(0.9)
-        case .right: return Color.blue.opacity(0.9)
-        case .middle: return Color.green.opacity(0.8)
-        case .extra1, .extra2: return Color.orange.opacity(0.8)
-        }
-    }
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.0
     
     var body: some View {
         ZStack {
-            // Pulse effect
-            ForEach(0..<3) { i in
-                Circle()
-                    .stroke(
-                        buttonColor.opacity(0.3 - (Double(i) * 0.1)),
-                        lineWidth: 1.5 - (CGFloat(i) * 0.5)
-                    )
-                    .frame(width: clickAnimation ? 60 + CGFloat(i * 15) : 20, height: clickAnimation ? 60 + CGFloat(i * 15) : 20)
-                    .opacity(clickAnimation ? 0 : 0.7)
-            }
+            // Pulse effect for clicks
+            Circle()
+                .fill(clickColor.opacity(0.3))
+                .frame(width: 40, height: 40)
+                .scaleEffect(pulseScale)
+                .opacity(pulseOpacity)
+                .onAppear {
+                    withAnimation(Animation.easeOut(duration: 0.5).repeatCount(isDoubleClick ? 2 : 1, autoreverses: true)) {
+                        pulseScale = 1.3
+                        pulseOpacity = 0.7
+                    }
+                }
             
-            // Mouse pointer
+            // Mouse icon
             ZStack {
-                // Button indicator
-                Circle()
-                    .fill(buttonColor)
-                    .frame(width: 12, height: 12)
+                // Mouse body
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(.sRGB, white: 0.9, opacity: 1), Color(.sRGB, white: 0.8, opacity: 1)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 24, height: 36)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 0.5)
+                    )
                 
-                // Mouse shape
-                MouseShape()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 24, height: 28)
-                    .offset(x: -2, y: -2)
+                // Button indicators
+                VStack(spacing: 2) {
+                    // Left button
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(button == .left ? clickColor : Color.gray.opacity(0.3))
+                        .frame(width: 10, height: 10)
+                    
+                    // Right button
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(button == .right ? clickColor : Color.gray.opacity(0.3))
+                        .frame(width: 10, height: 10)
+                    
+                    // Middle button/scroll wheel
+                    if button == .middle {
+                        Circle()
+                            .fill(clickColor)
+                            .frame(width: 8, height: 8)
+                    } else {
+                        Circle()
+                            .fill(Color.gray.opacity(0.5))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .offset(y: -4)
+                
+                // Double-click indicator
+                if isDoubleClick {
+                    Text("2×")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(4)
+                        .background(Circle().fill(Color.blue.opacity(0.7)))
+                        .offset(x: 12, y: -12)
+                }
+                
+                // Extra buttons indicator
+                if button == .extra1 || button == .extra2 {
+                    Image(systemName: button == .extra1 ? "arrow.left" : "arrow.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(4)
+                        .background(Circle().fill(Color.orange.opacity(0.7)))
+                        .offset(x: button == .extra1 ? -14 : 14, y: 0)
+                }
             }
-            .scaleEffect(clickAnimation ? 0.9 : 1.0)
+            .shadow(color: Color.black.opacity(0.2), radius: 2, x: 0, y: 2)
         }
-        .onAppear {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                clickAnimation = true
-            }
+    }
+    
+    private var clickColor: Color {
+        switch button {
+        case .left: return Color.blue
+        case .right: return Color.orange
+        case .middle: return Color.purple
+        case .extra1, .extra2: return Color.green
+        case .other: return Color.gray
         }
     }
 }
 
 struct MouseScrollView: View {
-    let direction: MouseVisualizer.MouseActionType.ScrollDirection
+    let direction: ScrollDirection
+    let isMomentum: Bool
     let isAnimating: Bool
     
     @State private var scrollAnimation = false
     
     var body: some View {
         ZStack {
-            // Mouse shape
-            MouseShape()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: 24, height: 28)
-                .offset(x: -2, y: -2)
+            // Mouse with scroll wheel
+            ZStack {
+                // Mouse body
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(.sRGB, white: 0.9, opacity: 1), Color(.sRGB, white: 0.8, opacity: 1)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 24, height: 36)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 0.5)
+                    )
+                
+                // Scroll wheel
+                ZStack {
+                    Circle()
+                        .fill(Color.gray.opacity(0.3))
+                        .frame(width: 10, height: 10)
+                    
+                    // Scroll direction indicator
+                    Group {
+                        if direction == .up {
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.white)
+                                .offset(y: scrollAnimation ? -2 : 0)
+                        } else if direction == .down {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.white)
+                                .offset(y: scrollAnimation ? 2 : 0)
+                        } else if direction == .left {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.white)
+                                .offset(x: scrollAnimation ? -2 : 0)
+                        } else if direction == .right {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.white)
+                                .offset(x: scrollAnimation ? 2 : 0)
+                        }
+                    }
+                }
+                .offset(y: -4)
+            }
+            .shadow(color: Color.black.opacity(0.2), radius: 2, x: 0, y: 2)
             
-            // Scroll wheel indicator
-            ScrollWheelIndicator(direction: direction, isAnimating: scrollAnimation)
-                .offset(y: -2)
+            // Momentum indicator
+            if isMomentum {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 40, height: 40)
+                    
+                    // Momentum trail
+                    HStack(spacing: 2) {
+                        ForEach(0..<3) { i in
+                            Circle()
+                                .fill(Color.blue.opacity(0.7 - Double(i) * 0.2))
+                                .frame(width: 4, height: 4)
+                        }
+                    }
+                    .rotationEffect(directionAngle)
+                    .offset(x: 12)
+                }
+            }
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.8).repeatCount(1, autoreverses: true)) {
+            withAnimation(Animation.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) {
                 scrollAnimation = true
             }
         }
     }
-}
-
-struct ScrollWheelIndicator: View {
-    let direction: MouseVisualizer.MouseActionType.ScrollDirection
-    let isAnimating: Bool
     
-    var body: some View {
-        ZStack {
-            // Wheel
-            Circle()
-                .fill(Color.gray.opacity(0.3))
-                .frame(width: 8, height: 8)
-            
-            // Direction indicator
-            Group {
-                switch direction {
-                case .up:
-                    Image(systemName: "chevron.up")
-                        .offset(y: isAnimating ? -10 : 0)
-                case .down:
-                    Image(systemName: "chevron.down")
-                        .offset(y: isAnimating ? 10 : 0)
-                case .left:
-                    Image(systemName: "chevron.left")
-                        .offset(x: isAnimating ? -10 : 0)
-                case .right:
-                    Image(systemName: "chevron.right")
-                        .offset(x: isAnimating ? 10 : 0)
-                }
-            }
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(.white.opacity(0.9))
+    private var directionAngle: Angle {
+        switch direction {
+        case .up: return .degrees(270)
+        case .down: return .degrees(90)
+        case .left: return .degrees(180)
+        case .right: return .degrees(0)
         }
     }
 }
 
 struct MouseMoveView: View {
+    let isFast: Bool
     let isAnimating: Bool
     
-    @State private var moveOpacity = 0.0
+    @State private var moveAnimation = false
     
     var body: some View {
         ZStack {
-            // Mouse shape
-            MouseShape()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: 24, height: 28)
-                .offset(x: -2, y: -2)
-            
-            // Motion trail
-            HStack(spacing: 2) {
-                ForEach(0..<3) { i in
-                    Circle()
-                        .fill(Color.white.opacity(0.8 - (Double(i) * 0.25)))
-                        .frame(width: 4 - CGFloat(i), height: 4 - CGFloat(i))
+            // Movement trail
+            ZStack {
+                // Mouse cursor
+                Image(systemName: "cursorarrow.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white)
+                    .shadow(color: Color.black.opacity(0.3), radius: 2, x: 1, y: 1)
+                
+                // Movement trail
+                if isFast {
+                    HStack(spacing: 2) {
+                        ForEach(0..<4) { i in
+                            Image(systemName: "cursorarrow.fill")
+                                .font(.system(size: 16 - CGFloat(i) * 3))
+                                .foregroundColor(.white.opacity(0.7 - Double(i) * 0.2))
+                                .offset(x: -CGFloat(i) * 6, y: CGFloat(i) * 3)
+                        }
+                    }
+                    .offset(x: moveAnimation ? 5 : 0, y: moveAnimation ? -3 : 0)
                 }
             }
-            .offset(x: -20, y: 0)
-            .opacity(moveOpacity)
+            .offset(x: moveAnimation ? 5 : -5, y: moveAnimation ? -5 : 5)
         }
         .onAppear {
-            withAnimation(.easeIn(duration: 0.4)) {
-                moveOpacity = 1.0
-            }
-            
-            // Fade out motion trail
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                withAnimation(.easeOut(duration: 0.5)) {
-                    moveOpacity = 0.0
-                }
+            withAnimation(Animation.easeInOut(duration: isFast ? 0.3 : 0.7).repeatForever(autoreverses: true)) {
+                moveAnimation = true
             }
         }
-    }
-}
-
-struct MouseShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        
-        // Start at top left
-        path.move(to: CGPoint(x: 0, y: 0))
-        
-        // Move to bottom point
-        path.addLine(to: CGPoint(x: 0, y: rect.height * 0.8))
-        
-        // Create the bottom curve
-        path.addLine(to: CGPoint(x: rect.width * 0.4, y: rect.height * 0.6))
-        
-        // Add the right side and return to top
-        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
-        path.addLine(to: CGPoint(x: rect.width, y: 0))
-        
-        // Close the path
-        path.closeSubpath()
-        
-        return path
     }
 }
 
@@ -334,10 +556,10 @@ struct MouseShape: Shape {
         position: CGPoint(x: 0.5, y: 0.5),
         button: .left,
         scrollDelta: nil,
-        speed: 0
+        isDown: true
     )
     
-    return ZStack {
+    ZStack {
         Color.black
         MouseVisualizer(events: [clickEvent])
     }

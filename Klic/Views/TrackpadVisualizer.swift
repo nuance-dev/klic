@@ -1,830 +1,596 @@
 import SwiftUI
+import Combine
+import os.log
+import Foundation
 
 struct TrackpadVisualizer: View {
-    let events: [InputEvent]
-    let trackpadSize: CGSize
+    // MARK: - Properties
     
-    // Access to raw touches from the monitor for more accurate finger position display
-    @ObservedObject var trackpadMonitor: TrackpadMonitor = TrackpadMonitor()
+    let events: [InputEvent]
+    var trackpadSize: CGSize?
+    var trackpadMonitor: TrackpadMonitor?
+    
+    @State private var currentGesture: TrackpadGesture?
+    @State private var activeTouches: [FingerTouch] = []
+    @State private var gestureOpacity: Double = 0
+    @State private var touchesOpacity: Double = 0
+    @State private var isMinimalMode: Bool = false
     
     // Animation states
-    @State private var isAnimating = false
+    @State private var isAnimating: Bool = false
+    @State private var animationProgress: CGFloat = 0
     
-    // Get the latest trackpad events of each type
-    private var touchEvents: [InputEvent] {
-        events.filter { $0.type == .trackpadTouch }
+    // Gesture display timing
+    private let gestureFadeInDuration: Double = 0.2
+    private let gestureDuration: Double = 1.5
+    private let gestureFadeOutDuration: Double = 0.3
+    
+    // Touch display timing
+    private let touchFadeInDuration: Double = 0.15
+    private let touchDuration: Double = 0.8
+    private let touchFadeOutDuration: Double = 0.2
+    
+    // Trackpad dimensions
+    private let trackpadAspectRatio: CGFloat = 1.6 // Width:Height ratio
+    
+    // MARK: - Initialization
+    
+    init(events: [InputEvent], trackpadSize: CGSize? = nil, trackpadMonitor: TrackpadMonitor? = nil) {
+        self.events = events
+        self.trackpadSize = trackpadSize
+        self.trackpadMonitor = trackpadMonitor
     }
     
-    private var gestureEvents: [InputEvent] {
-        events.filter { $0.type == .trackpadGesture }
-    }
-    
-    private var latestTouchEvent: InputEvent? {
-        touchEvents.first
-    }
-    
-    private var latestGestureEvent: InputEvent? {
-        gestureEvents.first
-    }
-    
-    // Check gesture types
-    private var gestureType: GestureDisplayType {
-        if let gesture = latestGestureEvent?.trackpadGesture {
-            // Check if this is a momentum scroll
-            if gesture.isMomentumScroll {
-                // Get direction from swipe type if available
-                if case .swipe(let direction) = gesture.type {
-                    return .momentumScroll(direction: direction)
-                } else {
-                    return .momentumScroll(direction: nil)
-                }
-            }
-            
-            switch gesture.type {
-            case .swipe(let direction):
-                return .swipe(direction: direction)
-            case .pinch:
-                return .pinch
-            case .rotate:
-                return .rotate
-            case .tap(let count):
-                return .tap(count: count)
-            default:
-                return .none
-            }
-        }
-        
-        // If touch events but no gesture
-        if !touchEvents.isEmpty, let touches = latestTouchEvent?.trackpadTouches {
-            return .touch(count: touches.count)
-        }
-        
-        // Check if we have raw touches from monitor but no specific gesture
-        if !trackpadMonitor.rawTouches.isEmpty {
-            return .touch(count: trackpadMonitor.rawTouches.count)
-        }
-        
-        return .none
-    }
-    
-    // Enum to simplify gesture display logic
-    private enum GestureDisplayType: Equatable {
-        case swipe(direction: TrackpadGesture.GestureType.SwipeDirection)
-        case pinch
-        case rotate
-        case tap(count: Int)
-        case touch(count: Int)
-        case momentumScroll(direction: TrackpadGesture.GestureType.SwipeDirection?)
-        case none
-    }
+    // MARK: - Body
     
     var body: some View {
         ZStack {
-            // Only show content when there are events
-            if !events.isEmpty || !trackpadMonitor.rawTouches.isEmpty {
-                // Dynamic content based on gesture type
-                Group {
-                    switch gestureType {
-                    case .swipe(let direction):
-                        SwipeGestureView(
-                            direction: direction,
-                            magnitude: latestGestureEvent?.trackpadGesture?.magnitude ?? 0.5
-                        )
-                        
-                    case .pinch:
-                        PinchGestureView(
-                            magnitude: latestGestureEvent?.trackpadGesture?.magnitude ?? 0.5,
-                            touches: trackpadMonitor.rawTouches
-                        )
-                        
-                    case .rotate:
-                        RotationGestureView(
-                            rotation: latestGestureEvent?.trackpadGesture?.rotation ?? 0,
-                            touches: trackpadMonitor.rawTouches
-                        )
-                        
-                    case .tap(let count), .touch(let count):
-                        if !trackpadMonitor.rawTouches.isEmpty {
-                            RealTouchGestureView(
-                                touches: trackpadMonitor.rawTouches,
-                                fingerCount: count,
-                                trackpadSize: trackpadSize
-                            )
-                        } else {
-                            TapGestureView(fingerCount: count)
-                        }
-                        
-                    case .momentumScroll(let direction):
-                        MomentumScrollView(direction: direction)
-                        
-                    case .none:
-                        // Nothing to display
-                        EmptyView()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: gestureType)
+            if isMinimalMode {
+                minimalTrackpadView
+            } else {
+                standardTrackpadView
+            }
+        }
+        .onAppear {
+            // Check for minimal mode on appearance
+            isMinimalMode = UserDefaults.standard.bool(forKey: "minimalMode")
+            
+            // Process events
+            processEvents()
+        }
+        .onChange(of: events) { oldValue, newValue in
+            processEvents()
+        }
+    }
+    
+    // Process the incoming events
+    private func processEvents() {
+        // Find gesture events
+        if let gestureEvent = events.first(where: { $0.trackpadGesture != nil }),
+           let gesture = gestureEvent.trackpadGesture {
+            handleNewGesture(gesture)
+        }
+        
+        // Find touch events
+        if let touchEvent = events.first(where: { $0.trackpadTouches != nil }),
+           let touches = touchEvent.trackpadTouches, !touches.isEmpty {
+            handleNewTouches(touches)
+        }
+    }
+    
+    // MARK: - Views
+    
+    private var standardTrackpadView: some View {
+        VStack(spacing: 8) {
+            // Gesture visualization
+            ZStack {
+                // Trackpad outline
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    .aspectRatio(trackpadAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: 240)
                 
-                // Gesture label
-                VStack {
-                    Spacer()
+                // Touch points
+                ForEach(activeTouches, id: \.id) { touch in
+                    Circle()
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .frame(width: 16, height: 16)
+                        .position(
+                            x: touch.position.x * 240,
+                            y: touch.position.y * (240 / trackpadAspectRatio)
+                        )
+                        .opacity(touchesOpacity)
+                }
+                
+                // Gesture visualization
+                if let gesture = currentGesture {
+                    gestureVisualization(for: gesture)
+                        .opacity(gestureOpacity)
+                }
+            }
+            .frame(maxWidth: 240, maxHeight: 240 / trackpadAspectRatio)
+            .background(Color.black.opacity(0.2))
+            .cornerRadius(12)
+            
+            // Gesture description
+            if let gesture = currentGesture {
+                Text(gestureDescription(for: gesture))
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(8)
+                    .opacity(gestureOpacity)
+            }
+        }
+        .padding(12)
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(16)
+    }
+    
+    private var minimalTrackpadView: some View {
+        HStack(spacing: 8) {
+            // Gesture icon
+            if let gesture = currentGesture {
+                gestureIcon(for: gesture)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(width: 24, height: 24)
+            }
+            
+            // Gesture description
+            if let gesture = currentGesture {
+                Text(minimalGestureDescription(for: gesture))
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+        .opacity(gestureOpacity)
+    }
+    
+    // MARK: - Gesture Visualization
+    
+    @ViewBuilder
+    private func gestureVisualization(for gesture: TrackpadGesture) -> some View {
+        switch gesture.type {
+        case .swipe(let direction):
+            swipeVisualization(direction: direction, fingerCount: gesture.touches.count)
+        case .pinch:
+            pinchVisualization(gesture: gesture)
+        case .rotate:
+            rotateVisualization(gesture: gesture)
+        case .tap(let count):
+            tapVisualization(count: count, fingerCount: gesture.touches.count)
+        case .scroll(let fingerCount, let deltaX, let deltaY):
+            scrollVisualization(fingerCount: fingerCount, deltaX: deltaX, deltaY: deltaY, isMomentum: gesture.isMomentumScroll)
+        }
+    }
+    
+    @ViewBuilder
+    private func swipeVisualization(direction: TrackpadGesture.GestureType.SwipeDirection, fingerCount: Int) -> some View {
+        let arrowLength: CGFloat = 80
+        
+        ZStack {
+            // Direction arrow
+            Path { path in
+                // Start at center
+                path.move(to: CGPoint(x: 120, y: 120 / trackpadAspectRatio))
+                
+                // Draw line in direction
+                switch direction {
+                case .up:
+                    path.addLine(to: CGPoint(x: 120, y: (120 / trackpadAspectRatio) - arrowLength))
+                case .down:
+                    path.addLine(to: CGPoint(x: 120, y: (120 / trackpadAspectRatio) + arrowLength))
+                case .left:
+                    path.addLine(to: CGPoint(x: 120 - arrowLength, y: 120 / trackpadAspectRatio))
+                case .right:
+                    path.addLine(to: CGPoint(x: 120 + arrowLength, y: 120 / trackpadAspectRatio))
+                }
+            }
+            .stroke(Color.white, lineWidth: 2)
+            
+            // Arrow head
+            arrowHead(for: direction)
+                .foregroundColor(Color.white)
+                .frame(width: 12, height: 12)
+                .position(arrowHeadPosition(for: direction, arrowLength: arrowLength))
+            
+            // Finger count indicator
+            Text("\(fingerCount)")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.black)
+                .frame(width: 24, height: 24)
+                .background(Color.white)
+                .clipShape(Circle())
+                .position(x: 120, y: 120 / trackpadAspectRatio)
+        }
+        .opacity(animationProgress)
+    }
+    
+    @ViewBuilder
+    private func pinchVisualization(gesture: TrackpadGesture) -> some View {
+        let isPinchIn = gesture.magnitude < 0
+        
+        ZStack {
+            // Pinch arrows
+            ForEach(0..<4) { i in
+                let angle = Double(i) * Double.pi / 2
+                
+                Path { path in
+                    let startDistance: CGFloat = isPinchIn ? 60 : 30
+                    let endDistance: CGFloat = isPinchIn ? 30 : 60
                     
-                    if gestureType != .none {
-                        Text(gestureDescription)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule()
-                                    .fill(Color.black.opacity(0.5))
-                                    .overlay(
-                                        Capsule()
-                                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
-                                    )
-                            )
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
+                    let startX = 120 + cos(angle) * startDistance
+                    let startY = (120 / trackpadAspectRatio) + sin(angle) * startDistance
+                    let endX = 120 + cos(angle) * endDistance
+                    let endY = (120 / trackpadAspectRatio) + sin(angle) * endDistance
+                    
+                    path.move(to: CGPoint(x: startX, y: startY))
+                    path.addLine(to: CGPoint(x: endX, y: endY))
+                }
+                .stroke(Color.white, lineWidth: 2)
+                
+                // Arrow heads
+                arrowHead(angle: angle + (isPinchIn ? Double.pi : 0))
+                    .foregroundColor(Color.white)
+                    .frame(width: 10, height: 10)
+                    .position(
+                        x: 120 + cos(angle) * (isPinchIn ? 30 : 60),
+                        y: (120 / trackpadAspectRatio) + sin(angle) * (isPinchIn ? 30 : 60)
+                    )
+            }
+            
+            // Finger count indicator
+            Text("\(gesture.touches.count)")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.black)
+                .frame(width: 24, height: 24)
+                .background(Color.white)
+                .clipShape(Circle())
+                .position(x: 120, y: 120 / trackpadAspectRatio)
+        }
+        .opacity(animationProgress)
+    }
+    
+    @ViewBuilder
+    private func rotateVisualization(gesture: TrackpadGesture) -> some View {
+        let isClockwise = gesture.rotation ?? 0 > 0
+        
+        ZStack {
+            // Rotation circle
+            Circle()
+                .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                .frame(width: 100, height: 100)
+                .position(x: 120, y: 120 / trackpadAspectRatio)
+            
+            // Rotation arrow
+            Path { path in
+                let radius: CGFloat = 50
+                let startAngle: CGFloat = isClockwise ? Double.pi / 4 : Double.pi * 7 / 4
+                let endAngle: CGFloat = isClockwise ? Double.pi * 7 / 4 : Double.pi / 4
+                
+                path.addArc(
+                    center: CGPoint(x: 120, y: 120 / trackpadAspectRatio),
+                    radius: radius,
+                    startAngle: Angle(radians: Double(startAngle)),
+                    endAngle: Angle(radians: Double(endAngle)),
+                    clockwise: !isClockwise
+                )
+            }
+            .stroke(Color.white, lineWidth: 2)
+            
+            // Arrow head
+            let arrowAngle = isClockwise ? Double.pi * 7 / 4 : Double.pi / 4
+            arrowHead(angle: arrowAngle + (isClockwise ? Double.pi / 2 : -Double.pi / 2))
+                .foregroundColor(Color.white)
+                .frame(width: 10, height: 10)
+                .position(
+                    x: 120 + cos(arrowAngle) * 50,
+                    y: (120 / trackpadAspectRatio) + sin(arrowAngle) * 50
+                )
+            
+            // Finger count indicator
+            Text("\(gesture.touches.count)")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.black)
+                .frame(width: 24, height: 24)
+                .background(Color.white)
+                .clipShape(Circle())
+                .position(x: 120, y: 120 / trackpadAspectRatio)
+        }
+        .opacity(animationProgress)
+    }
+    
+    @ViewBuilder
+    private func tapVisualization(count: Int, fingerCount: Int) -> some View {
+        ZStack {
+            // Tap circles
+            ForEach(0..<min(fingerCount, 5), id: \.self) { i in
+                let offset: CGFloat = fingerCount <= 1 ? 0 : CGFloat(i - (fingerCount - 1) / 2) * 30
+                
+                Circle()
+                    .stroke(Color.white, lineWidth: 2)
+                    .frame(width: 30, height: 30)
+                    .position(x: 120 + offset, y: 120 / trackpadAspectRatio)
+                
+                // Tap count for first circle
+                if i == 0 && count > 1 {
+                    Text("\(count)×")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .position(x: 120 + offset, y: (120 / trackpadAspectRatio) - 25)
                 }
             }
         }
-        .frame(width: trackpadSize.width, height: trackpadSize.height)
-        .contentShape(Rectangle())
-        .onAppear {
-            startAnimations()
+        .opacity(animationProgress)
+    }
+    
+    @ViewBuilder
+    private func scrollVisualization(fingerCount: Int, deltaX: CGFloat, deltaY: CGFloat, isMomentum: Bool) -> some View {
+        let direction: TrackpadGesture.GestureType.SwipeDirection = {
+            if abs(deltaX) > abs(deltaY) {
+                return deltaX > 0 ? .right : .left
+            } else {
+                return deltaY > 0 ? .up : .down
+            }
+        }()
+        
+        ZStack {
+            // Scroll arrows
+            VStack(spacing: 20) {
+                if direction == .up || direction == .down {
+                    ForEach(0..<3) { i in
+                        Path { path in
+                            let yOffset = CGFloat(i - 1) * 20
+                            path.move(to: CGPoint(x: 100, y: (120 / trackpadAspectRatio) + yOffset))
+                            path.addLine(to: CGPoint(x: 140, y: (120 / trackpadAspectRatio) + yOffset))
+                        }
+                        .stroke(Color.white, lineWidth: 2)
+                    }
+                } else {
+                    ForEach(0..<3) { i in
+                        Path { path in
+                            let xOffset = CGFloat(i - 1) * 20
+                            path.move(to: CGPoint(x: 120 + xOffset, y: (120 / trackpadAspectRatio) - 20))
+                            path.addLine(to: CGPoint(x: 120 + xOffset, y: (120 / trackpadAspectRatio) + 20))
+                        }
+                        .stroke(Color.white, lineWidth: 2)
+                    }
+                }
+            }
+            
+            // Direction arrow
+            Path { path in
+                // Start at center
+                path.move(to: CGPoint(x: 120, y: 120 / trackpadAspectRatio))
+                
+                // Draw line in direction
+                let arrowLength: CGFloat = 40
+                switch direction {
+                case .up:
+                    path.addLine(to: CGPoint(x: 120, y: (120 / trackpadAspectRatio) - arrowLength))
+                case .down:
+                    path.addLine(to: CGPoint(x: 120, y: (120 / trackpadAspectRatio) + arrowLength))
+                case .left:
+                    path.addLine(to: CGPoint(x: 120 - arrowLength, y: 120 / trackpadAspectRatio))
+                case .right:
+                    path.addLine(to: CGPoint(x: 120 + arrowLength, y: 120 / trackpadAspectRatio))
+                }
+            }
+            .stroke(Color.white, lineWidth: 2)
+            
+            // Arrow head
+            let arrowLength: CGFloat = 40
+            arrowHead(for: direction)
+                .foregroundColor(Color.white)
+                .frame(width: 12, height: 12)
+                .position(arrowHeadPosition(for: direction, arrowLength: arrowLength))
+            
+            // Momentum indicator
+            if isMomentum {
+                Text("momentum")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.3))
+                    .cornerRadius(4)
+                    .position(x: 120, y: (120 / trackpadAspectRatio) + 50)
+            }
+            
+            // Finger count indicator
+            Text("\(fingerCount)")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.black)
+                .frame(width: 24, height: 24)
+                .background(Color.white)
+                .clipShape(Circle())
+                .position(x: 120, y: 120 / trackpadAspectRatio)
+        }
+        .opacity(animationProgress)
+    }
+    
+    // MARK: - Helper Views
+    
+    @ViewBuilder
+    private func arrowHead(for direction: TrackpadGesture.GestureType.SwipeDirection) -> some View {
+        switch direction {
+        case .up:
+            Triangle()
+                .rotation(Angle(degrees: 0))
+        case .down:
+            Triangle()
+                .rotation(Angle(degrees: 180))
+        case .left:
+            Triangle()
+                .rotation(Angle(degrees: -90))
+        case .right:
+            Triangle()
+                .rotation(Angle(degrees: 90))
         }
     }
     
-    private func startAnimations() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-            isAnimating = true
+    private func arrowHead(angle: CGFloat) -> some View {
+        Triangle()
+            .rotation(Angle(radians: Double(angle)))
+    }
+    
+    private func arrowHeadPosition(for direction: TrackpadGesture.GestureType.SwipeDirection, arrowLength: CGFloat) -> CGPoint {
+        switch direction {
+        case .up:
+            return CGPoint(x: 120, y: (120 / trackpadAspectRatio) - arrowLength)
+        case .down:
+            return CGPoint(x: 120, y: (120 / trackpadAspectRatio) + arrowLength)
+        case .left:
+            return CGPoint(x: 120 - arrowLength, y: 120 / trackpadAspectRatio)
+        case .right:
+            return CGPoint(x: 120 + arrowLength, y: 120 / trackpadAspectRatio)
         }
     }
     
-    // Generate a clean description of the gesture
-    private var gestureDescription: String {
-        switch gestureType {
+    // MARK: - Gesture Descriptions
+    
+    private func gestureDescription(for gesture: TrackpadGesture) -> String {
+        switch gesture.type {
+        case .swipe(let direction):
+            return "\(gesture.touches.count)-finger swipe \(direction)"
         case .pinch:
-            return "Pinch"
+            let direction = gesture.magnitude < 0 ? "in" : "out"
+            return "Pinch \(direction)"
         case .rotate:
-            return "Rotate"
+            let direction = (gesture.rotation ?? 0) > 0 ? "clockwise" : "counter-clockwise"
+            return "Rotate \(direction)"
+        case .tap(let count):
+            let tapText = count > 1 ? "\(count)-tap" : "tap"
+            return "\(gesture.touches.count)-finger \(tapText)"
+        case .scroll(let fingerCount, _, _):
+            let momentumText = gesture.isMomentumScroll ? " (momentum)" : ""
+            return "\(fingerCount)-finger scroll\(momentumText)"
+        }
+    }
+    
+    private func minimalGestureDescription(for gesture: TrackpadGesture) -> String {
+        switch gesture.type {
+        case .swipe(let direction):
+            return "\(gesture.touches.count)F swipe \(direction)"
+        case .pinch:
+            let direction = gesture.magnitude < 0 ? "in" : "out"
+            return "Pinch \(direction)"
+        case .rotate:
+            let direction = (gesture.rotation ?? 0) > 0 ? "CW" : "CCW"
+            return "Rotate \(direction)"
+        case .tap(let count):
+            let tapText = count > 1 ? "\(count)×" : ""
+            return "\(gesture.touches.count)F \(tapText)tap"
+        case .scroll(let fingerCount, _, _):
+            let momentumText = gesture.isMomentumScroll ? " (m)" : ""
+            return "\(fingerCount)F scroll\(momentumText)"
+        }
+    }
+    
+    @ViewBuilder
+    private func gestureIcon(for gesture: TrackpadGesture) -> some View {
+        switch gesture.type {
         case .swipe(let direction):
             switch direction {
-            case .up: return "Swipe Up"
-            case .down: return "Swipe Down"
-            case .left: return "Swipe Left"
-            case .right: return "Swipe Right"
+            case .up:
+                Image(systemName: "arrow.up")
+            case .down:
+                Image(systemName: "arrow.down")
+            case .left:
+                Image(systemName: "arrow.left")
+            case .right:
+                Image(systemName: "arrow.right")
             }
-        case .tap(let count):
-            return "\(count)-Finger Tap"
-        case .touch(let count):
-            return "\(count) Fingers"
-        case .momentumScroll(let direction):
-            var directionText = ""
-            if let direction = direction {
-                switch direction {
-                case .up: directionText = "Up"
-                case .down: directionText = "Down"
-                case .left: directionText = "Left"
-                case .right: directionText = "Right"
-                }
-            }
-            return "Momentum \(directionText)"
-        case .none:
-            return ""
+        case .pinch:
+            gesture.magnitude < 0 
+                ? Image(systemName: "arrow.down.forward.and.arrow.up.backward")
+                : Image(systemName: "arrow.up.backward.and.arrow.down.forward")
+        case .rotate:
+            (gesture.rotation ?? 0) > 0
+                ? Image(systemName: "arrow.clockwise")
+                : Image(systemName: "arrow.counterclockwise")
+        case .tap:
+            Image(systemName: "hand.tap")
+        case .scroll:
+            gesture.isMomentumScroll
+                ? Image(systemName: "scroll")
+                : Image(systemName: "hand.draw")
         }
     }
-}
-
-// MARK: - Gesture Visualizations
-
-// New view to display actual touch positions using NSTouch data
-struct RealTouchGestureView: View {
-    let touches: [NSTouch]
-    let fingerCount: Int
-    let trackpadSize: CGSize
     
-    @State private var isAnimating = false
-    @State private var showRipples = false
+    // MARK: - Event Handling
     
-    var body: some View {
-        ZStack {
-            // Show trackpad outline
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                .frame(width: trackpadSize.width - 12, height: trackpadSize.height - 12)
+    private func handleNewGesture(_ gesture: TrackpadGesture) {
+        // Update current gesture
+        withAnimation(.easeOut(duration: gestureFadeInDuration)) {
+            currentGesture = gesture
+            gestureOpacity = 1.0
             
-            // Draw each touch based on its normalized position
-            ForEach(0..<touches.count, id: \.self) { index in
-                let touch = touches[index]
-                // Position within our container based on normalized position
-                let position = CGPoint(
-                    x: touch.normalizedPosition.x * (trackpadSize.width - 20),
-                    y: (1 - touch.normalizedPosition.y) * (trackpadSize.height - 20) // Flip Y coordinate
-                )
-                
-                TouchCircle(touch: touch, position: position, showRipples: showRipples, isAnimating: isAnimating)
-            }
-            
-            // Number indicator for multi-finger touches
-            if fingerCount > 1 {
-                FingerCountIndicator(count: fingerCount, isAnimating: isAnimating, position: CGPoint(x: trackpadSize.width / 2, y: 14))
-            }
-        }
-        .onAppear {
-            // First show the fingers
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                isAnimating = true
-            }
-            
-            // Then show ripple effect with delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showRipples = true
-                withAnimation(.easeOut(duration: 0.7)) {
-                    isAnimating = true
-                }
-            }
-        }
-    }
-}
-
-// Helper view for touch circles
-struct TouchCircle: View {
-    let touch: NSTouch
-    let position: CGPoint
-    let showRipples: Bool
-    let isAnimating: Bool
-    
-    var body: some View {
-        ZStack {
-            // Base circle
-            Circle()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: 12, height: 12)
-            
-            // Pressure indicator (inner color)
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.blue.opacity(0.8),
-                            Color.purple.opacity(0.6)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(
-                    width: 8 * 0.7, 
-                    height: 8 * 0.7
-                )
-        }
-        .position(position)
-        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
-        
-        // Show touch ripple animation
-        if showRipples {
-            RippleEffect(position: position, isAnimating: isAnimating)
-        }
-    }
-}
-
-// Helper view for ripple effects
-struct RippleEffect: View {
-    let position: CGPoint
-    let isAnimating: Bool
-    
-    var body: some View {
-        ForEach(0..<2, id: \.self) { i in
-            Circle()
-                .stroke(Color.white.opacity(0.4 - (Double(i) * 0.15)), lineWidth: 1)
-                .frame(width: 20 + CGFloat(i * 8), height: 20 + CGFloat(i * 8))
-                .opacity(isAnimating ? 0 : 1)
-                .position(position)
-        }
-    }
-}
-
-// Helper view for finger count indicator
-struct FingerCountIndicator: View {
-    let count: Int
-    let isAnimating: Bool
-    let position: CGPoint
-    
-    var body: some View {
-        Text("\(count)")
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .foregroundColor(.black)
-            .frame(width: 18, height: 18)
-            .background(Circle().fill(Color.white))
-            .shadow(color: Color.black.opacity(0.2), radius: 2, x: 0, y: 1)
-            .opacity(isAnimating ? 1.0 : 0.0)
-            .scaleEffect(isAnimating ? 1.0 : 0.8)
-            .position(position)
-    }
-}
-
-struct SwipeGestureView: View {
-    let direction: TrackpadGesture.GestureType.SwipeDirection
-    let magnitude: CGFloat
-    
-    @State private var isAnimating = false
-    
-    var body: some View {
-        ZStack {
-            // Arrow trail visualization
-            DirectionalArrow(
-                direction: direction,
-                magnitude: magnitude,
-                isAnimating: isAnimating
-            )
-        }
-        .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7).repeatCount(1)) {
-                isAnimating = true
-            }
-        }
-    }
-}
-
-// New view for momentum scrolling visualization
-struct MomentumScrollView: View {
-    let direction: TrackpadGesture.GestureType.SwipeDirection?
-    
-    @State private var isAnimating = false
-    @State private var animatingDots = false
-    
-    private var rotation: Angle {
-        if let direction = direction {
-            switch direction {
-            case .up: return .degrees(-90)
-            case .down: return .degrees(90)
-            case .left: return .degrees(180)
-            case .right: return .degrees(0)
-            }
-        }
-        return .zero
-    }
-    
-    var body: some View {
-        ZStack {
-            // Momentum indicator (fading dots showing continuation)
-            HStack(spacing: 4) {
-                ForEach(0..<5) { i in
-                    Circle()
-                        .fill(Color.white.opacity(1.0 - (Double(i) * 0.2)))
-                        .frame(width: 4, height: 4)
-                        .offset(x: isAnimating ? CGFloat(i * 4) : 0)
-                        .animation(
-                            Animation.easeInOut(duration: 0.8)
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(i) * 0.1),
-                            value: isAnimating
-                        )
-                }
-            }
-            .rotationEffect(rotation)
-            
-            // Indicator for momentum
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.7), Color.purple.opacity(0.5)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 16, height: 16)
-                
-                Text("M")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white)
-            }
-            .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
-            .scaleEffect(animatingDots ? 1.1 : 1.0)
-            .animation(
-                Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                value: animatingDots
-            )
-        }
-        .onAppear {
+            // Start animation
             isAnimating = true
-            animatingDots = true
+            animationProgress = 1.0
         }
-    }
-}
-
-struct DirectionalArrow: View {
-    let direction: TrackpadGesture.GestureType.SwipeDirection
-    let magnitude: CGFloat
-    let isAnimating: Bool
-    
-    private var arrowLength: CGFloat {
-        min(40, 20 + (magnitude * 20))
-    }
-    
-    private var rotation: Angle {
-        switch direction {
-        case .up: return .degrees(-90)
-        case .down: return .degrees(90)
-        case .left: return .degrees(180)
-        case .right: return .degrees(0)
-        }
-    }
-    
-    var body: some View {
-        ZStack {
-            // Arrow trail effect
-            ForEach(0..<3) { i in
-                ArrowShape()
-                    .stroke(
-                        Color.white.opacity(0.4 - (Double(i) * 0.1)),
-                        lineWidth: 1.5 - (CGFloat(i) * 0.5)
-                    )
-                    .frame(width: arrowLength - CGFloat(i * 4), height: 16)
-                    .offset(getOffset(for: i))
+        
+        // Schedule fade out
+        DispatchQueue.main.asyncAfter(deadline: .now() + gestureDuration) {
+            withAnimation(.easeIn(duration: gestureFadeOutDuration)) {
+                gestureOpacity = 0
+                isAnimating = false
+                animationProgress = 0
             }
-            
-            // Main arrow
-            ArrowShape()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: arrowLength, height: 16)
-        }
-        .rotationEffect(rotation)
-        .offset(isAnimating ? getAnimationOffset() : .zero)
-        .opacity(isAnimating ? 1.0 : 0.7)
-        .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
-    }
-    
-    private func getOffset(for index: Int) -> CGSize {
-        let baseOffset: CGFloat = CGFloat(index) * -3
-        
-        switch direction {
-        case .up: return CGSize(width: 0, height: baseOffset)
-        case .down: return CGSize(width: 0, height: baseOffset)
-        case .left: return CGSize(width: baseOffset, height: 0)
-        case .right: return CGSize(width: baseOffset, height: 0)
         }
     }
     
-    private func getAnimationOffset() -> CGSize {
-        let animationDistance: CGFloat = 8
+    private func handleNewTouches(_ touches: [FingerTouch]) {
+        // Update active touches
+        withAnimation(.easeOut(duration: touchFadeInDuration)) {
+            activeTouches = touches
+            touchesOpacity = 1.0
+        }
         
-        switch direction {
-        case .up: return CGSize(width: 0, height: -animationDistance)
-        case .down: return CGSize(width: 0, height: animationDistance)
-        case .left: return CGSize(width: -animationDistance, height: 0)
-        case .right: return CGSize(width: animationDistance, height: 0)
+        // Schedule fade out
+        DispatchQueue.main.asyncAfter(deadline: .now() + touchDuration) {
+            withAnimation(.easeIn(duration: touchFadeOutDuration)) {
+                touchesOpacity = 0
+            }
         }
     }
 }
 
-struct ArrowShape: Shape {
+// MARK: - Helper Shapes
+
+struct Triangle: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         
-        // Shaft
-        path.move(to: CGPoint(x: 0, y: rect.height / 2))
-        path.addLine(to: CGPoint(x: rect.width * 0.8, y: rect.height / 2))
-        
-        // Arrow head
-        path.move(to: CGPoint(x: rect.width * 0.7, y: 0))
-        path.addLine(to: CGPoint(x: rect.width, y: rect.height / 2))
-        path.addLine(to: CGPoint(x: rect.width * 0.7, y: rect.height))
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
         
         return path
     }
 }
 
-struct PinchGestureView: View {
-    let magnitude: CGFloat
-    let touches: [NSTouch]
-    
-    @State private var isAnimating = false
-    @State private var isPinchingIn = false
-    
-    private var shouldUseRealTouches: Bool {
-        return touches.count >= 2
-    }
-    
-    var body: some View {
+// MARK: - Preview
+
+struct TrackpadVisualizer_Previews: PreviewProvider {
+    static var previews: some View {
         ZStack {
-            if shouldUseRealTouches {
-                // Draw real touch positions with pinch indicator
-                ForEach(0..<min(touches.count, 2), id: \.self) { i in
-                    let position = getPositionFromNormalizedTouch(touches[i])
-                    
-                    ZStack {
-                        // Touch circle
-                        Circle()
-                            .fill(Color.white.opacity(0.9))
-                            .frame(width: 12, height: 12)
-                        
-                        // Center dot
-                        Circle()
-                            .fill(Color.blue)
-                            .frame(width: 6, height: 6)
-                    }
-                    .position(position)
-                }
-                
-                // Connecting line between touches
-                if touches.count >= 2 {
-                    let pos1 = getPositionFromNormalizedTouch(touches[0])
-                    let pos2 = getPositionFromNormalizedTouch(touches[1])
-                    
-                    // Line connecting touch points
-                    Line(from: pos1, to: pos2)
-                        .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
-                        .animation(.spring(response: 0.3), value: pos1)
-                        .animation(.spring(response: 0.3), value: pos2)
-                }
-            } else {
-                // Fallback to simulated visualization if no real touches
-                // Expanding/contracting circles
-                ForEach(0..<3) { i in
-                    Circle()
-                        .stroke(
-                            Color.white.opacity(0.7 - (Double(i) * 0.15)),
-                            lineWidth: 1.5 - (CGFloat(i) * 0.4)
-                        )
-                        .frame(
-                            width: getCircleSize(for: i),
-                            height: getCircleSize(for: i)
-                        )
-                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-                }
-                
-                // Finger indicators
-                ForEach(0..<2) { i in
-                    Circle()
-                        .fill(Color.white.opacity(0.9))
-                        .frame(width: 6, height: 6)
-                        .offset(getFingerOffset(for: i))
-                        .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
-                }
-            }
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.8).repeatCount(1, autoreverses: true)) {
-                isAnimating = true
-                isPinchingIn = magnitude > 0.5
-            }
-        }
-    }
-    
-    private func getPositionFromNormalizedTouch(_ touch: NSTouch) -> CGPoint {
-        return CGPoint(
-            x: touch.normalizedPosition.x * 100,
-            y: (1 - touch.normalizedPosition.y) * 72 // Flip Y coordinate
-        )
-    }
-    
-    private func getCircleSize(for index: Int) -> CGFloat {
-        let baseSize: CGFloat = 20 + (CGFloat(index) * 12)
-        let animationFactor: CGFloat = isAnimating ? (isPinchingIn ? 0.7 : 1.3) : 1.0
-        
-        return baseSize * animationFactor
-    }
-    
-    private func getFingerOffset(for index: Int) -> CGSize {
-        let direction: CGFloat = index == 0 ? -1 : 1
-        let distance: CGFloat = isAnimating ? (isPinchingIn ? 15 : 30) : 20
-        
-        return CGSize(width: direction * distance, height: direction * distance)
-    }
-}
-
-// Simple line shape
-struct Line: Shape {
-    var from: CGPoint
-    var to: CGPoint
-    
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: from)
-        path.addLine(to: to)
-        return path
-    }
-}
-
-struct RotationGestureView: View {
-    let rotation: CGFloat
-    let touches: [NSTouch]
-    
-    @State private var isAnimating = false
-    
-    private var shouldUseRealTouches: Bool {
-        return touches.count >= 2
-    }
-    
-    var body: some View {
-        ZStack {
-            if shouldUseRealTouches {
-                // Draw real touch positions with rotation indicator
-                ForEach(0..<min(touches.count, 2), id: \.self) { i in
-                    let position = getPositionFromNormalizedTouch(touches[i])
-                    
-                    ZStack {
-                        // Touch circle
-                        Circle()
-                            .fill(Color.white.opacity(0.9))
-                            .frame(width: 12, height: 12)
-                        
-                        // Direction indicator
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 8))
-                            .foregroundColor(.blue)
-                    }
-                    .position(position)
-                }
-                
-                // Rotation arc between touches
-                if touches.count >= 2 {
-                    let pos1 = getPositionFromNormalizedTouch(touches[0])
-                    let pos2 = getPositionFromNormalizedTouch(touches[1])
-                    let center = CGPoint(
-                        x: (pos1.x + pos2.x) / 2,
-                        y: (pos1.y + pos2.y) / 2
-                    )
-                    
-                    // Rotation indicator
-                    Circle()
-                        .trim(from: 0, to: 0.75)
-                        .stroke(
-                            Color.white.opacity(0.7),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
-                        )
-                        .frame(width: 24, height: 24)
-                        .position(center)
-                        .rotationEffect(isAnimating ? .degrees(rotation > 0 ? 360 : -360) : .zero)
-                        .animation(
-                            .easeInOut(duration: 0.8).repeatCount(1, autoreverses: true),
-                            value: isAnimating
-                        )
-                }
-            } else {
-                // Fallback to simulated visualization if no real touches
-                // Rotation arc
-                Circle()
-                    .trim(from: 0, to: 0.8)
-                    .stroke(
-                        Color.white.opacity(0.8),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                    )
-                    .frame(width: 40, height: 40)
-                    .rotationEffect(isAnimating ? .degrees(rotation > 0 ? 360 : -360) : .zero)
-                    .animation(
-                        .easeInOut(duration: 0.8).repeatCount(1, autoreverses: true),
-                        value: isAnimating
-                    )
-                    .shadow(color: Color.black.opacity(0.15), radius: 2, x: 0, y: 1)
-                
-                // Rotation indicator dot
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 6, height: 6)
-                    .offset(y: -20)
-                    .rotationEffect(isAnimating ? .degrees(rotation > 0 ? 360 : -360) : .zero)
-                    .animation(
-                        .easeInOut(duration: 0.8).repeatCount(1, autoreverses: true),
-                        value: isAnimating
-                    )
-                    .shadow(color: Color.black.opacity(0.25), radius: 1, x: 0, y: 1)
-            }
-        }
-        .onAppear {
-            isAnimating = true
-        }
-    }
-    
-    private func getPositionFromNormalizedTouch(_ touch: NSTouch) -> CGPoint {
-        return CGPoint(
-            x: touch.normalizedPosition.x * 100,
-            y: (1 - touch.normalizedPosition.y) * 72 // Flip Y coordinate
-        )
-    }
-}
-
-struct TapGestureView: View {
-    let fingerCount: Int
-    
-    @State private var isAnimating = false
-    @State private var showRipples = false
-    
-    // Fix non-constant range warning
-    private var displayFingerCount: Int {
-        min(fingerCount, 5)
-    }
-    
-    private var fingerIndices: [Int] {
-        Array(0..<displayFingerCount)
-    }
-    
-    var body: some View {
-        ZStack {
-            // Tap ripple effect
-            if showRipples {
-                ForEach(0..<3) { i in
-                    Circle()
-                        .stroke(
-                            Color.white.opacity(0.6 - (Double(i) * 0.15)),
-                            lineWidth: 1.5 - (CGFloat(i) * 0.4)
-                        )
-                        .frame(
-                            width: 20 + (isAnimating ? CGFloat(i * 15) : 0),
-                            height: 20 + (isAnimating ? CGFloat(i * 15) : 0)
-                        )
-                        .opacity(isAnimating ? 0 : 1)
-                }
-            }
+            Color.black
             
-            // Finger indicators for multi-touch
-            ZStack {
-                // Create circle of fingers for multi-touch
-                ForEach(fingerIndices, id: \.self) { i in
-                    Circle()
-                        .fill(Color.white.opacity(0.9))
-                        .frame(width: 8, height: 8)
-                        .offset(getFingerOffset(for: i, of: displayFingerCount))
-                        .opacity(isAnimating ? 1.0 : 0.3)
-                        .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
-                }
-            }
-            
-            // Number indicator for multi-finger taps
-            if fingerCount > 1 {
-                Text("\(fingerCount)")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundColor(.black)
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(Color.white))
-                    .shadow(color: Color.black.opacity(0.2), radius: 2, x: 0, y: 1)
-                    .opacity(isAnimating ? 1.0 : 0.0)
-                    .scaleEffect(isAnimating ? 1.0 : 0.8)
-            }
-        }
-        .onAppear {
-            // First show the fingers
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                isAnimating = true
-            }
-            
-            // Then show ripple effect with delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showRipples = true
-                withAnimation(.easeOut(duration: 0.7)) {
-                    isAnimating = true
-                }
+            VStack(spacing: 20) {
+                TrackpadVisualizer(events: [])
+                TrackpadVisualizer(events: [])
             }
         }
     }
-    
-    private func getFingerOffset(for index: Int, of total: Int) -> CGSize {
-        // If single finger, just center it
-        if total == 1 {
-            return .zero
-        }
-        
-        // For multi-finger, arrange in a circle pattern
-        let radius: CGFloat = 14
-        let angle = (2.0 * .pi / Double(total)) * Double(index)
-        
-        return CGSize(
-            width: radius * cos(CGFloat(angle)),
-            height: radius * sin(CGFloat(angle))
-        )
-    }
-}
-
-// Preview
-#Preview {
-    // Create test gesture events
-    let trackpadGesture = TrackpadGesture(
-        type: .swipe(direction: .up),
-        touches: [
-            FingerTouch(
-                id: 1, 
-                position: CGPoint(x: 0.5, y: 0.5),
-                pressure: 0.7,
-                majorRadius: 6,
-                minorRadius: 6,
-                fingerType: .index
-            )
-        ],
-        magnitude: 0.8,
-        rotation: nil
-    )
-    
-    let event = InputEvent.trackpadGestureEvent(gesture: trackpadGesture)
-    
-    return ZStack {
-        Color.black
-        TrackpadVisualizer(
-            events: [event],
-            trackpadSize: CGSize(width: 150, height: 100)
-        )
-    }
-    .frame(width: 200, height: 150)
 } 

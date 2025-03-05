@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
-class InputManager: ObservableObject {
+class InputManager: ObservableObject, TrackpadMonitorDelegate {
     @Published var keyboardEvents: [InputEvent] = []
     @Published var mouseEvents: [InputEvent] = []
     @Published var trackpadEvents: [InputEvent] = []
@@ -31,7 +31,7 @@ class InputManager: ObservableObject {
     // Timer for auto-hiding the overlay
     private var visibilityTimer: Timer?
     private var eventTimers: [String: Timer] = [:]
-    private let fadeOutDelay: TimeInterval = 1.5  // Shorter delay for better UX
+    private var fadeOutDelay: TimeInterval = 1.5  // Shorter delay for better UX
     private let fadeInDuration: TimeInterval = 0.2
     private let fadeOutDuration: TimeInterval = 0.3
     
@@ -48,9 +48,15 @@ class InputManager: ObservableObject {
         case trackpad
     }
     
+    // New property for managing user preference vs. actual opacity
+    private var userOpacityPreference: Double = 0.9
+    
     init() {
         Logger.info("Initializing InputManager", log: Logger.app)
         setupSubscriptions()
+        
+        // Set self as the trackpad monitor delegate
+        trackpadMonitor.delegate = self
     }
     
     private func setupSubscriptions() {
@@ -164,7 +170,7 @@ class InputManager: ObservableObject {
         }
     }
     
-    private func startAllMonitors() {
+    public func startAllMonitors() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.keyboardMonitor.startMonitoring()
             self.mouseMonitor.startMonitoring()
@@ -175,11 +181,21 @@ class InputManager: ObservableObject {
     }
     
     private func filterRepeatKeyEvents(_ events: [InputEvent]) -> [InputEvent] {
-        // Filter out excessive repeat events when typing fast
+        // Enhanced filtering for fast typing sequences
         var filteredEvents: [InputEvent] = []
-        var lastCharacter: String?
-        var repeatCount = 0
+        var lastCharacters: [String] = []
         var lastTimestamp = Date.distantPast
+        var lastKeyCode: Int? = nil
+        
+        // Track the last 12 typed characters to detect typing patterns (increased from 8)
+        let maxTrackedChars = 12
+        
+        // Create a map of timestamps by character for better sequence detection
+        var characterTimestamps: [String: [Date]] = [:]
+        
+        // Calculate typing speed dynamically
+        let typingRate = calculateTypingRate(events)
+        let adjustedKeyPressFrequency = typingRate > 0 ? min(0.3, max(0.05, 1.0 / typingRate)) : keyPressFrequency
         
         for event in events {
             if let keyEvent = event.keyboardEvent, let char = keyEvent.characters {
@@ -191,35 +207,98 @@ class InputManager: ObservableObject {
                     consecutiveKeyPresses += 1
                     // Adjust key press frequency based on typing speed
                     if consecutiveKeyPresses > keyPressThreshold {
-                        keyPressFrequency = min(0.3, max(0.1, timeDelta * 2))
+                        keyPressFrequency = min(0.3, max(0.08, timeDelta * 2))
                     }
                 } else {
                     consecutiveKeyPresses = 0
                 }
                 
-                if char == lastCharacter && keyEvent.isRepeat {
-                    // Count repeats of the same character
-                    repeatCount += 1
-                    if repeatCount <= 1 { // Only keep at most 2 repeats (original + 1 repeat)
-                        filteredEvents.append(event)
+                // Check if this is a repeat of the last character
+                let isKeyRepeat = keyEvent.isRepeat || (char == lastCharacters.first && keyEvent.keyCode == lastKeyCode)
+                
+                // Check if we're typing fast and need to filter events
+                let isFastTyping = timeDelta < adjustedKeyPressFrequency && filteredEvents.count >= maxKeyboardEvents - 1
+                
+                // Special case: Don't filter out modifier keys or special keys regardless of typing speed
+                let isModifierKey = !keyEvent.modifiers.isEmpty || 
+                                    char == "⌘" || char == "⇧" || char == "⌥" || char == "⌃" ||
+                                    keyEvent.keyCode == 55 || keyEvent.keyCode == 56 || 
+                                    keyEvent.keyCode == 58 || keyEvent.keyCode == 59 ||
+                                    keyEvent.keyCode == 60 || keyEvent.keyCode == 61 ||
+                                    keyEvent.keyCode == 62 || keyEvent.keyCode == 63
+                
+                // Also don't filter function keys, arrow keys, and other special keys
+                let isSpecialKey = (keyEvent.keyCode >= 96 && keyEvent.keyCode <= 111) || // Function keys
+                                   (keyEvent.keyCode >= 123 && keyEvent.keyCode <= 126) || // Arrow keys
+                                   keyEvent.keyCode == 51 || keyEvent.keyCode == 53 || // Delete, Escape
+                                   keyEvent.keyCode == 36 || keyEvent.keyCode == 76 || // Return/Enter
+                                   keyEvent.keyCode == 48 || keyEvent.keyCode == 49    // Tab, Space
+                
+                // Track character timestamps for sequence analysis
+                if !isModifierKey && !isSpecialKey {
+                    if characterTimestamps[char] == nil {
+                        characterTimestamps[char] = [event.timestamp]
+                    } else {
+                        characterTimestamps[char]?.append(event.timestamp)
                     }
-                } else if timeDelta < keyPressFrequency && filteredEvents.count >= maxKeyboardEvents - 1 {
-                    // If typing very fast and we already have many keys, skip some to avoid cluttering the display
-                    // But still track the character for repeat detection
-                    lastCharacter = char
-                    lastTimestamp = event.timestamp
-                } else {
-                    // New character, add it and reset repeat count
-                    repeatCount = 0
-                    lastCharacter = char
-                    lastTimestamp = event.timestamp
-                    filteredEvents.append(event)
                 }
                 
-                // Update last key press time
-                lastKeyPressTime = event.timestamp
+                // Special handling for key-up events - always include them
+                let isKeyUp = !keyEvent.isDown
+                
+                // Decide whether to keep this event
+                if isKeyUp {
+                    // Always show key-up events for currently displayed keys
+                    let keyDownExists = filteredEvents.contains { existingEvent in
+                        if let existingKeyEvent = existingEvent.keyboardEvent {
+                            return existingKeyEvent.isDown && existingKeyEvent.keyCode == keyEvent.keyCode
+                        }
+                        return false
+                    }
+                    
+                    if keyDownExists {
+                        filteredEvents.append(event)
+                    }
+                } else if isKeyRepeat {
+                    // For repeat keys, only keep one repeat max
+                    if !lastCharacters.contains(where: { $0 == char && $0 != lastCharacters.first }) {
+                        filteredEvents.append(event)
+                        lastCharacters.insert(char, at: 0)
+                        if lastCharacters.count > maxTrackedChars {
+                            lastCharacters.removeLast()
+                        }
+                    }
+                } else if (isFastTyping && !isModifierKey && !isSpecialKey) {
+                    // If typing very fast and this is a regular key, we need to be selective
+                    
+                    // Check if this character makes a common sequence with previous characters
+                    let isDuplicate = isDuplicateInTypingSequence(char, keyCode: keyEvent.keyCode, previousChars: lastCharacters, timestamps: characterTimestamps)
+                    
+                    if !isDuplicate {
+                        // This is a new character in the sequence, keep it
+                        filteredEvents.append(event)
+                        lastCharacters.insert(char, at: 0)
+                        if lastCharacters.count > maxTrackedChars {
+                            lastCharacters.removeLast()
+                        }
+                    } else {
+                        Logger.debug("Filtered out duplicate character '\(char)' in fast typing sequence", log: Logger.app)
+                    }
+                    // Otherwise skip it as it's likely a repeated keystroke from fast typing
+                } else {
+                    // Normal case - add the event
+                    filteredEvents.append(event)
+                    lastCharacters.insert(char, at: 0)
+                    if lastCharacters.count > maxTrackedChars {
+                        lastCharacters.removeLast()
+                    }
+                }
+                
+                // Update timestamp and keycode
+                lastTimestamp = event.timestamp
+                lastKeyCode = keyEvent.keyCode
             } else {
-                // Non-character event, just add it
+                // Non-character event (like key up), always add it
                 filteredEvents.append(event)
             }
         }
@@ -229,7 +308,82 @@ class InputManager: ObservableObject {
             filteredEvents = Array(filteredEvents.prefix(maxKeyboardEvents))
         }
         
-        return filteredEvents
+        // Ensure the events are in the correct order (newest first)
+        return filteredEvents.sorted { $0.timestamp > $1.timestamp }
+    }
+    
+    // Helper function to calculate typing rate in characters per second
+    private func calculateTypingRate(_ events: [InputEvent]) -> Double {
+        guard events.count > 1 else { return 0.0 }
+        
+        // Filter to only key down events to calculate typing rate
+        let keyDownEvents = events.filter { 
+            if let keyEvent = $0.keyboardEvent {
+                return keyEvent.isDown
+            }
+            return false
+        }
+        
+        guard keyDownEvents.count > 1 else { return 0.0 }
+        
+        // Get the oldest and newest timestamps
+        let sortedEvents = keyDownEvents.sorted { $0.timestamp < $1.timestamp }
+        let oldestTime = sortedEvents.first!.timestamp
+        let newestTime = sortedEvents.last!.timestamp
+        
+        // Calculate time span and character count
+        let timeSpan = newestTime.timeIntervalSince(oldestTime)
+        if timeSpan > 0.1 {
+            // Characters per second
+            return Double(sortedEvents.count) / timeSpan
+        }
+        
+        return 0.0
+    }
+    
+    // Enhanced helper function to detect duplicate characters in typing sequences
+    private func isDuplicateInTypingSequence(_ char: String, keyCode: Int, previousChars: [String], timestamps: [String: [Date]]) -> Bool {
+        // If we have fewer than 2 previous characters, it's not a duplicate
+        if previousChars.count < 2 {
+            return false
+        }
+        
+        // Check for common patterns like repeated characters that aren't intentional repeats
+        // Example: When typing "better" fast, we might get "bebett" because of key repeat issues
+        
+        // Check if this character appears in position 0 and 2+ (skipping the most recent character)
+        for i in 2..<min(previousChars.count, 5) {
+            if i < previousChars.count && char == previousChars[i] {
+                // This could be a duplicate from fast typing
+                // For example, in "bebett", the second 'b' might be a false repeat
+                
+                // Check if this creates a pattern like "beb" -> "bet"
+                if i >= 2 && previousChars[i-1] != previousChars[0] {
+                    return true
+                }
+            }
+        }
+        
+        // Check for alternating patterns like "bebebe" which should be "bebe"
+        if previousChars.count >= 4 {
+            if char == previousChars[1] && previousChars[0] == previousChars[2] {
+                return true
+            }
+        }
+        
+        // Check for timing-based duplicates
+        if let charTimestamps = timestamps[char], charTimestamps.count >= 2 {
+            let latestTimestamp = charTimestamps.last!
+            let previousTimestamp = charTimestamps[charTimestamps.count - 2]
+            
+            // If the same character appears twice in a very short time (< 50ms), 
+            // it's likely a duplicate from fast typing
+            if latestTimestamp.timeIntervalSince(previousTimestamp) < 0.05 {
+                return true
+            }
+        }
+        
+        return false
     }
     
     private func updateActiveInputTypes(adding type: InputType? = nil, removing isEmpty: Bool = false) {
@@ -303,64 +457,59 @@ class InputManager: ObservableObject {
         visibilityTimer?.invalidate()
         visibilityTimer = nil
         
-        // Only trigger animation if not already visible
-        if !isOverlayVisible {
-            withAnimation(.spring(response: fadeInDuration, dampingFraction: 0.8)) {
-                isOverlayVisible = true
-                overlayOpacity = UserDefaults.standard.double(forKey: "overlayOpacity") > 0 ? 
-                                 UserDefaults.standard.double(forKey: "overlayOpacity") : 0.9
+        // If already showing, just reset the timer
+        if isOverlayVisible {
+            // Schedule auto-hide if no inputs are active after the delay
+            scheduleAutoHide()
+            return
+        }
+        
+        // Start showing the overlay with a fade-in effect
+        DispatchQueue.main.async {
+            // Fade in the overlay
+            withAnimation(.easeIn(duration: self.fadeInDuration)) {
+                self.isOverlayVisible = true
+                self.overlayOpacity = self.userOpacityPreference
             }
             
             Logger.debug("Overlay shown", log: Logger.app)
-        } else {
-            // Already visible, just update opacity in case it was fading out
-            withAnimation(.spring(response: fadeInDuration, dampingFraction: 0.8)) {
-                overlayOpacity = UserDefaults.standard.double(forKey: "overlayOpacity") > 0 ? 
-                                UserDefaults.standard.double(forKey: "overlayOpacity") : 0.9
-            }
-        }
-        
-        // Start hide timer only if no more inputs are coming in
-        if activeInputTypes.isEmpty {
-            startHideTimer()
+            
+            // Schedule auto-hide if no inputs are active after the delay
+            self.scheduleAutoHide()
         }
     }
     
-    private func startHideTimer() {
-        // Cancel existing timer
-        visibilityTimer?.invalidate()
-        
-        // Create new timer only if there are no active inputs
-        if activeInputTypes.isEmpty {
-            visibilityTimer = Timer.scheduledTimer(withTimeInterval: fadeOutDelay, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
+    private func scheduleAutoHide() {
+        // Create a new timer to hide the overlay after the delay
+        visibilityTimer = Timer.scheduledTimer(withTimeInterval: fadeOutDelay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // Only hide if no input types are active
+            if self.activeInputTypes.isEmpty {
                 self.hideOverlay()
             }
         }
     }
     
-    public func hideOverlay() {
-        // Cancel any pending hide timer
+    func hideOverlay() {
+        // Cancel any existing timer
         visibilityTimer?.invalidate()
         visibilityTimer = nil
         
-        // Only hide if visible
-        if isOverlayVisible {
-            // First fade out the opacity
-            withAnimation(.spring(response: fadeOutDuration, dampingFraction: 0.9)) {
-                overlayOpacity = 0
+        // If already hidden, do nothing
+        if !isOverlayVisible {
+            return
+        }
+        
+        // Hide the overlay with a fade-out effect
+        DispatchQueue.main.async {
+            // Fade out the overlay
+            withAnimation(.easeOut(duration: self.fadeOutDuration)) {
+                self.isOverlayVisible = false
+                self.overlayOpacity = 0.0
             }
             
-            // Then hide the overlay completely after the fade completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + fadeOutDuration) { [weak self] in
-                guard let self = self else { return }
-                
-                withAnimation(.easeOut(duration: 0.1)) {
-                    self.isOverlayVisible = false
-                }
-                
-                Logger.debug("Overlay hidden", log: Logger.app)
-            }
+            Logger.debug("Overlay hidden", log: Logger.app)
         }
     }
     
@@ -396,14 +545,211 @@ class InputManager: ObservableObject {
         }
     }
     
-    func setOpacityPreference(_ opacity: Double) {
-        // Store the user's opacity preference and update the current opacity if visible
-        UserDefaults.standard.set(opacity, forKey: "overlayOpacity")
+    func setOpacityPreference(_ value: Double) {
+        userOpacityPreference = value
         
+        // If overlay is currently visible, update its opacity
         if isOverlayVisible {
-            withAnimation {
-                overlayOpacity = opacity
+            DispatchQueue.main.async {
+                self.overlayOpacity = value
             }
         }
+    }
+    
+    func setAutoHideDelay(_ delay: Double) {
+        // Update the auto-hide delay
+        fadeOutDelay = delay
+    }
+    
+    func setInputTypeVisibility(keyboard: Bool, mouse: Bool, trackpad: Bool) {
+        // Store visibility preferences in UserDefaults
+        var visibleTypes: [String] = []
+        
+        if keyboard { visibleTypes.append("keyboard") }
+        if mouse { visibleTypes.append("mouse") }
+        if trackpad { visibleTypes.append("trackpad") }
+        
+        UserDefaults.standard.set(visibleTypes, forKey: "visibleInputTypes")
+    }
+    
+    func clearAllEvents() {
+        DispatchQueue.main.async {
+            self.keyboardEvents.removeAll()
+            self.mouseEvents.removeAll()
+            self.trackpadEvents.removeAll()
+            self.allEvents.removeAll()
+            self.activeInputTypes.removeAll()
+            
+            // Hide the overlay if it's visible
+            if self.isOverlayVisible {
+                self.hideOverlay()
+            }
+            
+            Logger.debug("All input events cleared", log: Logger.app)
+        }
+    }
+    
+    // Add method for demo inputs
+    func showDemoInputs() {
+        // Show the overlay
+        showOverlay()
+        
+        // Clear any existing events
+        clearAllEvents()
+        
+        // Create keyboard input demo
+        self.createKeyboardDemo()
+        
+        // Create mouse demo after a short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.createMouseDemo()
+        }
+        
+        // Create trackpad demo after another delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.createTrackpadDemo()
+        }
+    }
+    
+    private func createKeyboardDemo() {
+        // Create some keyboard shortcut demos
+        let commandKey = InputEvent.keyboardEvent(
+            key: "⌘",
+            keyCode: 55, // Command key
+            isDown: true,
+            modifiers: [.command],
+            characters: "⌘"
+        )
+        
+        let shiftKey = InputEvent.keyboardEvent(
+            key: "⇧",
+            keyCode: 56, // Shift key
+            isDown: true,
+            modifiers: [.shift],
+            characters: "⇧"
+        )
+        
+        let pKey = InputEvent.keyboardEvent(
+            key: "p",
+            keyCode: 35, // P key
+            isDown: true,
+            modifiers: [.command, .shift],
+            characters: "p"
+        )
+        
+        DispatchQueue.main.async {
+            self.keyboardEvents = [pKey, shiftKey, commandKey]
+            self.updateActiveInputTypes(adding: .keyboard)
+            self.updateAllEvents()
+        }
+    }
+    
+    private func createMouseDemo() {
+        // Create mouse click and move demos
+        let mouseClick = InputEvent.mouseEvent(
+            type: .mouseDown,
+            position: NSPoint(x: 800, y: 600),
+            button: .left,
+            isDown: true
+        )
+        
+        let mouseMove = InputEvent.mouseEvent(
+            type: .mouseMove,
+            position: NSPoint(x: 800, y: 600),
+            isDown: false
+        )
+        
+        DispatchQueue.main.async {
+            self.mouseEvents = [mouseClick, mouseMove]
+            self.updateActiveInputTypes(adding: .mouse)
+            self.updateAllEvents()
+        }
+    }
+    
+    private func createTrackpadDemo() {
+        // Create trackpad gestures demo
+        let centerTouch = FingerTouch(
+            id: 1,
+            position: CGPoint(x: 0.5, y: 0.5),
+            pressure: 1.0,
+            majorRadius: 10.0,
+            minorRadius: 10.0,
+            fingerType: .index,
+            timestamp: Date()
+        )
+        
+        let secondTouch = FingerTouch(
+            id: 2,
+            position: CGPoint(x: 0.6, y: 0.5),
+            pressure: 1.0,
+            majorRadius: 10.0,
+            minorRadius: 10.0,
+            fingerType: .middle,
+            timestamp: Date()
+        )
+        
+        let gesture = TrackpadGesture(
+            type: .pinch,
+            touches: [centerTouch, secondTouch],
+            magnitude: 0.7,
+            rotation: nil,
+            isMomentumScroll: false
+        )
+        
+        let gestureEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+        
+        DispatchQueue.main.async {
+            self.trackpadEvents = [gestureEvent]
+            self.updateActiveInputTypes(adding: .trackpad)
+            self.updateAllEvents()
+        }
+    }
+    
+    // MARK: - TrackpadMonitorDelegate Methods
+    
+    func trackpadMonitorDidDetectGesture(_ gesture: TrackpadGesture) {
+        // Create an input event from the gesture
+        let gestureEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+        
+        DispatchQueue.main.async {
+            // Add to trackpad events
+            if self.trackpadEvents.count >= self.maxTrackpadTouches {
+                self.trackpadEvents.removeLast()
+            }
+            self.trackpadEvents.insert(gestureEvent, at: 0)
+            
+            // Update active types and all events
+            self.updateActiveInputTypes(adding: .trackpad)
+            self.updateAllEvents()
+            self.showOverlay()
+            
+            // Set a timer to clear this event type
+            self.scheduleClearEventTimer(for: .trackpad)
+        }
+    }
+    
+    func trackpadTouchesBegan(touches: [FingerTouch]) {
+        // Handle new touches
+        let touchEvent = InputEvent.trackpadTouchEvent(touches: touches)
+        
+        DispatchQueue.main.async {
+            // Add to trackpad events
+            if self.trackpadEvents.count >= self.maxTrackpadTouches {
+                self.trackpadEvents.removeLast()
+            }
+            self.trackpadEvents.insert(touchEvent, at: 0)
+            
+            // Update active types and all events
+            self.updateActiveInputTypes(adding: .trackpad)
+            self.updateAllEvents()
+            self.showOverlay()
+            
+            // Set a timer to clear this event type
+            self.scheduleClearEventTimer(for: .trackpad)
+        }
+    }
+    
+    func trackpadTouchesEnded(touches: [FingerTouch]) {
+        // No need to add ended touches to the event list
     }
 } 

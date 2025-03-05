@@ -1,213 +1,366 @@
 import SwiftUI
+import AppKit
+
+// Add this comment to indicate we're using the global OverlayPosition
+// OverlayPosition is now defined in KlicApp.swift
 
 struct ConfigurationView: View {
     @Binding var opacity: Double
-    @State private var animateSlider = false
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var inputManager = InputManager.shared
     
-    // Constants for smooth animations
-    private let sliderTrackHeight: CGFloat = 4
-    private let sliderThumbSize: CGFloat = 18
-    private let containerCornerRadius: CGFloat = 16
+    // Position settings
+    @State private var selectedPosition: String
+    @State private var showDemoOverlay: Bool = false
+    
+    // Theme settings
+    @State private var selectedTheme: OverlayTheme = .dark
+    
+    // Input display options
+    @State private var showKeyboardInputs: Bool
+    @State private var showMouseInputs: Bool
+    @State private var showTrackpadInputs: Bool
+    
+    // Behavior settings
+    @State private var autoHideDelay: Double
+    
+    @State private var minimalDisplayMode: Bool = UserPreferences.getMinimalDisplayMode()
+    
+    enum OverlayTheme: String, CaseIterable, Identifiable {
+        case dark = "Dark"
+        case light = "Light"
+        case vibrant = "Vibrant"
+        
+        var id: String { self.rawValue }
+    }
+    
+    init(opacity: Binding<Double>) {
+        self._opacity = opacity
+        
+        // Initialize state from UserDefaults
+        let position = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
+        _selectedPosition = State(initialValue: position)
+        
+        // Default to true if the key doesn't exist
+        let keyboardExists = UserDefaults.standard.object(forKey: "showKeyboardInputs") != nil
+        let keyboard = UserDefaults.standard.bool(forKey: "showKeyboardInputs")
+        _showKeyboardInputs = State(initialValue: keyboardExists ? keyboard : true)
+        
+        let mouseExists = UserDefaults.standard.object(forKey: "showMouseInputs") != nil
+        let mouse = UserDefaults.standard.bool(forKey: "showMouseInputs")
+        _showMouseInputs = State(initialValue: mouseExists ? mouse : true)
+        
+        let trackpadExists = UserDefaults.standard.object(forKey: "showTrackpadInputs") != nil
+        let trackpad = UserDefaults.standard.bool(forKey: "showTrackpadInputs")
+        _showTrackpadInputs = State(initialValue: trackpadExists ? trackpad : true)
+        
+        let delay = UserDefaults.standard.double(forKey: "autoHideDelay")
+        _autoHideDelay = State(initialValue: delay == 0 ? 1.5 : delay)
+    }
     
     var body: some View {
-        VStack(spacing: 32) {
-            // Header with modern minimal design
+        VStack(spacing: 0) {
+            // Header with dismiss button
             HStack {
-                Text("Klic")
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
+                Text("Klic Settings")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
                 
                 Spacer()
                 
-                Button(action: {
-                    presentationMode.wrappedValue.dismiss()
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
                         .foregroundColor(.secondary)
-                        .padding(8)
-                        .contentShape(Circle())
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal)
+            .padding(.top, 24)
+            .padding(.bottom, 12)
             
-            // Content
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Display")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                VStack(alignment: .leading, spacing: 24) {
-                    // Opacity control with custom slider
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Overlay Opacity")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.primary)
-                        
-                        HStack(spacing: 16) {
-                            // Custom slider with modern design
-                            CustomSlider(
-                                value: $opacity,
-                                range: 0.1...1.0,
-                                trackHeight: sliderTrackHeight,
-                                thumbSize: sliderThumbSize,
-                                animate: animateSlider
-                            )
-                            .frame(height: sliderThumbSize)
-                            
-                            // Percentage display
-                            Text("\(Int(opacity * 100))%")
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundColor(.secondary)
-                                .frame(width: 40)
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Position section
+                    SettingsSectionView(title: "Overlay Position") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(OverlayPosition.allCases) { position in
+                                RadioButton(
+                                    title: position.rawValue,
+                                    subtitle: getPositionDescription(position),
+                                    isSelected: selectedPosition == position.rawValue
+                                ) {
+                                    withAnimation {
+                                        selectedPosition = position.rawValue
+                                        UserDefaults.standard.set(position.rawValue, forKey: "overlayPosition")
+                                        
+                                        // Apply position immediately
+                                        reconfigureOverlayPosition()
+                                    }
+                                }
+                            }
                         }
+                        .padding(.vertical, 8)
                     }
                     
-                    // Additional settings could be added here
-                    // VStack(alignment: .leading, spacing: 12) {
-                    //    // Future settings
-                    // }
+                    // Appearance section
+                    SettingsSectionView(title: "Appearance") {
+                        VStack(spacing: 20) {
+                            // Opacity slider
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Overlay Opacity")
+                                        .font(.system(size: 14, weight: .medium))
+                                    
+                                    Spacer()
+                                    
+                                    Text("\(Int(opacity * 100))%")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $opacity, in: 0.3...1.0) { editing in
+                                    if !editing {
+                                        UserDefaults.standard.set(opacity, forKey: "overlayOpacity")
+                                        inputManager.setOpacityPreference(opacity)
+                                    }
+                                }
+                                .tint(Color.accentColor)
+                            }
+                            
+                            Divider()
+                            
+                            // Theme selection (for future feature)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Theme")
+                                        .font(.system(size: 14, weight: .medium))
+                                    
+                                    Spacer()
+                                }
+                                
+                                Picker("Theme", selection: $selectedTheme) {
+                                    ForEach(OverlayTheme.allCases) { theme in
+                                        Text(theme.rawValue).tag(theme)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .onChange(of: selectedTheme) { old, new in
+                                    UserDefaults.standard.set(new.rawValue, forKey: "overlayTheme")
+                                }
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    
+                    // Show/Hide Section
+                    SettingsSectionView(title: "Input Types") {
+                        VStack(spacing: 12) {
+                            Toggle("Keyboard Inputs", isOn: $showKeyboardInputs)
+                                .onChange(of: showKeyboardInputs) { old, new in
+                                    UserDefaults.standard.set(new, forKey: "showKeyboardInputs")
+                                    updateInputVisibility()
+                                }
+                            
+                            Divider()
+                            
+                            Toggle("Mouse Inputs", isOn: $showMouseInputs)
+                                .onChange(of: showMouseInputs) { old, new in
+                                    UserDefaults.standard.set(new, forKey: "showMouseInputs")
+                                    updateInputVisibility()
+                                }
+                            
+                            Divider()
+                            
+                            Toggle("Trackpad Inputs", isOn: $showTrackpadInputs)
+                                .onChange(of: showTrackpadInputs) { old, new in
+                                    UserDefaults.standard.set(new, forKey: "showTrackpadInputs")
+                                    updateInputVisibility()
+                                }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    
+                    // Behavior section
+                    SettingsSectionView(title: "Behavior") {
+                        VStack(spacing: 20) {
+                            // Auto-hide delay slider
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Auto-hide Delay")
+                                        .font(.system(size: 14, weight: .medium))
+                                    
+                                    Spacer()
+                                    
+                                    Text(String(format: "%.1f sec", autoHideDelay))
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $autoHideDelay, in: 0.5...5.0, step: 0.5) { editing in
+                                    if !editing {
+                                        UserDefaults.standard.set(autoHideDelay, forKey: "autoHideDelay")
+                                        inputManager.setAutoHideDelay(autoHideDelay)
+                                    }
+                                }
+                                .tint(Color.accentColor)
+                            }
+                            
+                            Divider()
+                            
+                            // Show demo button
+                            Button {
+                                showDemoOverlay = true
+                                inputManager.showDemoInputs()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 12))
+                                    
+                                    Text("Show Demo")
+                                        .font(.system(size: 14, weight: .medium))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.accentColor.opacity(0.1))
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    
+                    // Display Options
+                    Section(header: Text("Display Options")) {
+                        // Minimal Display Mode Toggle
+                        Toggle("Mega Minimal Mode", isOn: $minimalDisplayMode)
+                            .onChange(of: minimalDisplayMode) { oldValue, newValue in
+                                UserPreferences.setMinimalDisplayMode(newValue)
+                            }
+                        
+                        // ... existing display options ...
+                    }
                 }
-                .padding(.leading, 4)
+                .padding(.horizontal)
+                .padding(.bottom, 24)
             }
-            
-            Spacer()
-            
-            // Done button with modern style
-            Button("Save Changes") {
-                presentationMode.wrappedValue.dismiss()
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .keyboardShortcut(.defaultAction)
         }
-        .padding(24)
-        .frame(width: 350, height: 260)
-        .background(
-            ZStack {
-                // Background blur with enhanced effect
-                BlurEffectView(material: .popover, blendingMode: .behindWindow)
-                
-                // Subtle gradient overlay for depth
-                LinearGradient(
-                    colors: [
-                        Color(.windowBackgroundColor).opacity(0.2),
-                        Color(.windowBackgroundColor).opacity(0.15)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-        )
-        .cornerRadius(containerCornerRadius)
-        .onAppear {
-            // Animate the slider when the view appears
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                    animateSlider = true
+        .frame(width: 400, height: 580)
+        .background(Material.regular)
+        .cornerRadius(12)
+        .onChange(of: showDemoOverlay) { oldValue, newValue in
+            if !newValue {
+                // Reset after demo
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    showDemoOverlay = false
                 }
             }
         }
     }
+    
+    private func getPositionDescription(_ position: OverlayPosition) -> String {
+        switch position {
+        case .bottomCenter:
+            return "Display at the bottom of the screen"
+        case .topCenter:
+            return "Display at the top of the screen"
+        case .expandedNotch:
+            return "Integrate with the notch on newer MacBooks"
+        }
+    }
+    
+    private func updateInputVisibility() {
+        // Set visibility of different input types in the InputManager
+        inputManager.setInputTypeVisibility(
+            keyboard: showKeyboardInputs,
+            mouse: showMouseInputs,
+            trackpad: showTrackpadInputs
+        )
+    }
+    
+    private func reconfigureOverlayPosition() {
+        // Notify that the position changed so window can be reconfigured
+        NotificationCenter.default.post(
+            name: NSNotification.Name("ReconfigureOverlayPosition"),
+            object: nil
+        )
+    }
 }
 
-// Custom slider for a more premium feel
-struct CustomSlider: View {
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let trackHeight: CGFloat
-    let thumbSize: CGFloat
-    let animate: Bool
+// Custom section view for consistent styling
+struct SettingsSectionView<Content: View>: View {
+    let title: String
+    let content: Content
+    
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
     
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Background track
-                RoundedRectangle(cornerRadius: trackHeight / 2)
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(height: trackHeight)
-                
-                // Filled portion of track
-                RoundedRectangle(cornerRadius: trackHeight / 2)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.accentColor,
-                                Color.accentColor.opacity(0.8)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: max(0, min(geometry.size.width, geometry.size.width * normalizedValue)), height: trackHeight)
-                
-                // Thumb
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: thumbSize, height: thumbSize)
-                    .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
-                    .offset(x: max(0, min(geometry.size.width - thumbSize / 2, geometry.size.width * normalizedValue - thumbSize / 2)))
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { gesture in
-                                let width = geometry.size.width
-                                let offsetX = min(max(gesture.location.x, 0), width)
-                                let percentage = offsetX / width
-                                
-                                let scaled = range.lowerBound + (range.upperBound - range.lowerBound) * percentage
-                                value = scaled
-                            }
-                    )
-                    .scaleEffect(animate ? 1.0 : 0.8)
-                    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: animate)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 2)
+            
+            VStack {
+                content
             }
+            .padding()
+            .background(Color.primary.opacity(0.05))
+            .cornerRadius(10)
         }
-    }
-    
-    // Calculate the normalized value (0-1) from the actual value
-    private var normalizedValue: Double {
-        (value - range.lowerBound) / (range.upperBound - range.lowerBound)
     }
 }
 
-struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .medium, design: .rounded))
-            .foregroundColor(.white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(
+// Custom radio button for position selection
+struct RadioButton: View {
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                // Radio circle indicator
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1.0),
-                                    Color.accentColor.opacity(configuration.isPressed ? 0.7 : 0.9)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
+                    Circle()
+                        .stroke(isSelected ? Color.accentColor : Color.gray.opacity(0.5), lineWidth: 1.5)
+                        .frame(width: 20, height: 20)
                     
-                    // Subtle highlight at the top
-                    if !configuration.isPressed {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.white.opacity(0.15))
-                            .frame(height: 1)
-                            .padding(.horizontal, 1)
-                            .padding(.top, 1)
-                            .allowsHitTesting(false)
+                    if isSelected {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 12, height: 12)
                     }
                 }
-            )
-            .shadow(color: Color.accentColor.opacity(configuration.isPressed ? 0.1 : 0.3), radius: configuration.isPressed ? 2 : 6, x: 0, y: configuration.isPressed ? 1 : 3)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.primary)
+                    
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
     }
+}
+
+// Add static shared instance for easy access from multiple views
+extension InputManager {
+    static let shared = InputManager()
 }
 
 #Preview {
-    ConfigurationView(opacity: .constant(0.8))
+    ConfigurationView(opacity: .constant(0.9))
 } 

@@ -1,137 +1,117 @@
 import SwiftUI
+import Combine
 
 struct ContentView: View {
-    @EnvironmentObject var inputManager: InputManager
-    @State private var showDebugInfo: Bool = false
+    @ObservedObject var inputManager = InputManager.shared
+    @State private var isMinimalMode: Bool = false
+    @State private var showSettings: Bool = false
+    
+    // MARK: - Body
     
     var body: some View {
         ZStack {
-            // Transparent background - ensure it fully clears the window
+            // Background
             Color.clear
                 .ignoresSafeArea()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             
-            // Input overlay - only show when there's active input
-            if inputManager.isOverlayVisible {
-                InputOverlayView(inputManager: inputManager)
-                    .padding(.horizontal, 20)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-                    .animation(.spring(response: 0.25, dampingFraction: 0.8), value: inputManager.isOverlayVisible)
-                    // Pass the trackpad monitor to the overlay view
-                    .environmentObject(inputManager.sharedTrackpadMonitor)
+            // Input visualizers
+            VStack(spacing: 12) {
+                // Keyboard visualizer
+                if !inputManager.keyboardEvents.isEmpty {
+                    KeyboardVisualizer(events: inputManager.keyboardEvents)
+                        .padding(.horizontal, isMinimalMode ? 8 : 16)
+                }
+                
+                // Mouse visualizer
+                if !inputManager.mouseEvents.isEmpty {
+                    MouseVisualizer(events: inputManager.mouseEvents)
+                        .padding(.horizontal, isMinimalMode ? 8 : 16)
+                }
+                
+                // Trackpad visualizer
+                if !inputManager.trackpadEvents.isEmpty {
+                    TrackpadVisualizer(events: inputManager.trackpadEvents)
+                        .padding(.horizontal, isMinimalMode ? 8 : 16)
+                }
             }
+            .padding(.vertical, 16)
             
-            // Debug view - only visible in development and only when activated via keyboard shortcut
-            #if DEBUG
+            // Settings button
             VStack {
-                if showDebugInfo {
-                    StatusView(inputManager: inputManager)
-                        .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.sRGB, red: 0.05, green: 0.05, blue: 0.06, opacity: 0.9))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                                )
-                        )
-                        .shadow(color: Color.black.opacity(0.15), radius: 6, x: 0, y: 2)
-                        .padding(.top, 16)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: showDebugInfo)
+                HStack {
+                    Spacer()
+                    
+                    Button(action: {
+                        showSettings.toggle()
+                    }) {
+                        Image(systemName: "gear")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(8)
+                            .background(Color.black.opacity(0.4))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding(16)
                 }
                 
                 Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            .padding()
-            #endif
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showSettings) {
+            SettingsView(isMinimalMode: $isMinimalMode)
+                .frame(width: 400, height: 300)
+        }
         .onAppear {
-            // Verify input monitoring is active when the view appears
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                checkInputStatus()
-            }
-        }
-        // Add keyboard shortcut to toggle debug info (Cmd+Opt+D)
-        .keyboardShortcut("d", modifiers: [.command, .option])
-        .onExitCommand {
-            showDebugInfo.toggle()
-        }
-    }
-    
-    private func checkInputStatus() {
-        if !inputManager.checkMonitoringStatus() {
-            Logger.info("Input monitors not active, attempting to restart", log: Logger.app)
-            inputManager.restartMonitoring()
+            // Start monitoring inputs
+            inputManager.startAllMonitors()
+            
+            // Load user preferences
+            isMinimalMode = UserDefaults.standard.bool(forKey: "minimalMode")
         }
     }
 }
 
-/// Status view for showing monitoring status (debug only)
-struct StatusView: View {
-    @ObservedObject var inputManager: InputManager
+// MARK: - Settings View
+
+struct SettingsView: View {
+    @Binding var isMinimalMode: Bool
+    @Environment(\.presentationMode) var presentationMode
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Klic Debug Status")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+        VStack(spacing: 20) {
+            Text("Settings")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .padding(.top, 20)
             
-            Divider()
-                .background(Color.white.opacity(0.3))
-                .padding(.vertical, 3)
-            
-            Group {
-                StatusRow(label: "Overlay Visible", value: inputManager.isOverlayVisible ? "Yes" : "No")
-                StatusRow(label: "Opacity", value: String(format: "%.1f", inputManager.overlayOpacity))
-                StatusRow(label: "Active Input Types", value: inputManager.activeInputTypes.map { $0.description }.joined(separator: ", "))
-                StatusRow(label: "Active Events", value: "\(inputManager.allEvents.count)")
-                StatusRow(label: "Keyboard Events", value: "\(inputManager.keyboardEvents.count)")
-                StatusRow(label: "Mouse Events", value: "\(inputManager.mouseEvents.count)")
-                StatusRow(label: "Trackpad Events", value: "\(inputManager.trackpadEvents.count)")
-                StatusRow(label: "Raw Touches", value: "\(inputManager.sharedTrackpadMonitor.rawTouches.count)")
+            Form {
+                Section(header: Text("Display Options")) {
+                    Toggle("Minimal Mode", isOn: $isMinimalMode)
+                        .onChange(of: isMinimalMode) { oldValue, newValue in
+                            UserDefaults.standard.set(newValue, forKey: "minimalMode")
+                        }
+                }
+                
+                Section(header: Text("Input Monitoring")) {
+                    Button("Restart Input Monitoring") {
+                        InputManager.shared.startAllMonitors()
+                    }
+                }
             }
-        }
-        .font(.system(size: 10))
-        .frame(width: 200)
-    }
-}
-
-struct StatusRow: View {
-    let label: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(label)
-                .foregroundColor(.white.opacity(0.7))
             
-            Spacer()
-            
-            Text(value)
-                .foregroundColor(.white)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-// Extension to make InputType description more readable
-extension InputManager.InputType: CustomStringConvertible {
-    var description: String {
-        switch self {
-        case .keyboard: return "Keyboard"
-        case .mouse: return "Mouse"
-        case .trackpad: return "Trackpad"
+            Button("Close") {
+                presentationMode.wrappedValue.dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.bottom, 20)
         }
     }
 }
 
-#Preview {
-    ContentView()
-        .environmentObject(InputManager())
+// MARK: - Preview
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 } 

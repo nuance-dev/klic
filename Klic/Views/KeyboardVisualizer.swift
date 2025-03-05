@@ -31,7 +31,36 @@ struct KeyboardVisualizer: View {
         return hasModifier && hasRegularKey
     }
     
+    @State private var isMinimalMode: Bool = false
+    
     var body: some View {
+        // Check for minimal mode on appearance
+        let _ = onAppear {
+            isMinimalMode = UserPreferences.getMinimalDisplayMode()
+            
+            // Listen for minimal mode changes
+            NotificationCenter.default.addObserver(
+                forName: .MinimalDisplayModeChanged,
+                object: nil,
+                queue: .main
+            ) { _ in
+                isMinimalMode = UserPreferences.getMinimalDisplayMode()
+            }
+        }
+        
+        if events.isEmpty {
+            EmptyView()
+        } else {
+            if isMinimalMode {
+                minimalKeyboardView
+            } else {
+                standardKeyboardView
+            }
+        }
+    }
+    
+    // Standard keyboard visualization
+    private var standardKeyboardView: some View {
         HStack(spacing: keyPadding) {
             if isShortcut {
                 // Display as shortcut
@@ -61,6 +90,115 @@ struct KeyboardVisualizer: View {
             }
         }
     }
+    
+    // Minimal keyboard visualization
+    private var minimalKeyboardView: some View {
+        HStack(spacing: 2) {
+            if isShortcut {
+                // Display as minimal shortcut
+                minimalShortcutView
+            } else {
+                // Display individual keys (max 3 in minimal mode)
+                ForEach(filteredEvents.prefix(3)) { event in
+                    if let keyEvent = event.keyboardEvent {
+                        minimalKeyView(keyEvent: keyEvent)
+                    }
+                }
+            }
+        }
+        .padding(4)
+        .background(Color.black.opacity(0.5))
+        .cornerRadius(4)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: filteredEvents.count)
+    }
+    
+    // Minimal key view
+    private func minimalKeyView(keyEvent: KeyboardEvent) -> some View {
+        let keyText = getKeyText(keyEvent)
+        
+        return Text(keyText)
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundColor(.white)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(.sRGB, red: 0.2, green: 0.2, blue: 0.25, opacity: 0.9))
+            )
+    }
+    
+    // Minimal shortcut view
+    private var minimalShortcutView: some View {
+        let shortcutText = getShortcutText()
+        
+        return Text(shortcutText)
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundColor(.white)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(.sRGB, red: 0.2, green: 0.2, blue: 0.25, opacity: 0.9))
+            )
+    }
+    
+    // Helper to get key text
+    private func getKeyText(_ keyEvent: KeyboardEvent) -> String {
+        if let char = keyEvent.characters {
+            switch char {
+            case "\r": return "↩"
+            case "\t": return "⇥"
+            case " ": return "␣"
+            case "\u{1b}": return "⎋"
+            case "\u{7f}": return "⌫"
+            default:
+                if char.count == 1 {
+                    return char.uppercased()
+                } else {
+                    return char
+                }
+            }
+        } else {
+            return "•"
+        }
+    }
+    
+    // Helper to get shortcut text
+    private func getShortcutText() -> String {
+        var text = ""
+        
+        // Add modifiers - collect all modifiers into a single set
+        var allModifiers: [KeyModifier] = []
+        for event in filteredEvents {
+            if let keyEvent = event.keyboardEvent {
+                allModifiers.append(contentsOf: keyEvent.modifiers)
+            }
+        }
+        
+        if allModifiers.contains(.command) { text += "⌘" }
+        if allModifiers.contains(.shift) { text += "⇧" }
+        if allModifiers.contains(.option) { text += "⌥" }
+        if allModifiers.contains(.control) { text += "⌃" }
+        
+        // Add regular keys
+        for event in filteredEvents {
+            if let keyEvent = event.keyboardEvent, 
+               keyEvent.modifiers.isEmpty, 
+               !keyEvent.key.isEmpty {
+                if keyEvent.key.count == 1 {
+                    text += keyEvent.key.uppercased()
+                    break
+                }
+            }
+        }
+        
+        return text
+    }
+    
+    // Helper to check if a key event is part of a shortcut
+    private func isShortcut(_ keyEvent: KeyboardEvent) -> Bool {
+        return !keyEvent.modifiers.isEmpty
+    }
 }
 
 struct ShortcutVisualizer: View {
@@ -79,7 +217,7 @@ struct ShortcutVisualizer: View {
         events.compactMap { event in
             guard let keyEvent = event.keyboardEvent, 
                   keyEvent.modifiers.isEmpty, 
-                  keyEvent.characters?.count == 1 else {
+                  keyEvent.key.count == 1 else {
                 return nil
             }
             return keyEvent
@@ -90,9 +228,9 @@ struct ShortcutVisualizer: View {
         var text = ""
         
         // Add modifiers - collect all modifiers into a single set
-        var allModifiers = KeyboardEvent.ModifierKeys()
+        var allModifiers: [KeyModifier] = []
         for keyEvent in modifierKeys {
-            allModifiers.formUnion(keyEvent.modifiers)
+            allModifiers.append(contentsOf: keyEvent.modifiers)
         }
         
         if allModifiers.contains(.command) { text += "⌘" }
@@ -101,7 +239,7 @@ struct ShortcutVisualizer: View {
         if allModifiers.contains(.control) { text += "⌃" }
         
         // Add regular keys
-        if let regularKey = regularKeys.first?.characters {
+        if let regularKey = regularKeys.first?.key {
             text += regularKey.uppercased()
         }
         
@@ -265,26 +403,26 @@ struct KeyCapsuleView: View {
 #Preview {
     // Create a few key events for previewing
     let events = [
-        InputEvent.keyEvent(
-            type: .keyDown,
+        InputEvent.keyboardEvent(
+            key: "⌘",
             keyCode: 55,
+            isDown: true,
+            modifiers: [.command],
             characters: nil,
-            modifiers: .command,
             isRepeat: false
         ),
-        InputEvent.keyEvent(
-            type: .keyDown,
+        InputEvent.keyboardEvent(
+            key: "R",
             keyCode: 15,
+            isDown: true,
+            modifiers: [.command],
             characters: "r",
-            modifiers: [],
             isRepeat: false
         )
     ]
     
-    return ZStack {
-        Color.black.opacity(0.5)
-        KeyboardVisualizer(events: events)
-            .padding()
-    }
-    .frame(width: 400, height: 200)
+    return KeyboardVisualizer(events: events)
+        .frame(width: 500, height: 300)
+        .background(Color.black.opacity(0.5))
+        .cornerRadius(12)
 } 
