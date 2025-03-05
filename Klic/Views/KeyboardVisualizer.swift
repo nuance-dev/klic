@@ -169,26 +169,55 @@ struct KeyboardVisualizer: View {
         
         // Add modifiers - collect all modifiers into a single set
         var allModifiers: [KeyModifier] = []
+        
+        // Create a map to collect all key-down events with their timestamps
+        var regularKeyEvents: [(keyEvent: KeyboardEvent, timestamp: Date)] = []
+        
+        // First collect modifiers and regular key events
         for event in filteredEvents {
             if let keyEvent = event.keyboardEvent {
-                allModifiers.append(contentsOf: keyEvent.modifiers)
+                // Add modifiers to the list
+                if !keyEvent.modifiers.isEmpty {
+                    allModifiers.append(contentsOf: keyEvent.modifiers)
+                }
+                
+                // If this is a regular key (not a modifier key itself)
+                if !keyEvent.isModifierKey && keyEvent.isDown {
+                    regularKeyEvents.append((keyEvent, event.timestamp))
+                }
+                
+                // Also add the key itself if it's a modifier key (e.g., Cmd, Shift)
+                if keyEvent.isModifierKey {
+                    for modifier in KeyModifier.allCases {
+                        if modifier.keyCode == keyEvent.keyCode {
+                            allModifiers.append(modifier)
+                        }
+                    }
+                }
             }
         }
         
+        // Remove duplicates from modifiers
+        allModifiers = Array(Set(allModifiers))
+        
+        // Add modifier symbols
         if allModifiers.contains(.command) { text += "⌘" }
         if allModifiers.contains(.shift) { text += "⇧" }
         if allModifiers.contains(.option) { text += "⌥" }
         if allModifiers.contains(.control) { text += "⌃" }
         
-        // Add regular keys
-        for event in filteredEvents {
-            if let keyEvent = event.keyboardEvent, 
-               keyEvent.modifiers.isEmpty, 
-               !keyEvent.key.isEmpty {
-                if keyEvent.key.count == 1 {
-                    text += keyEvent.key.uppercased()
-                    break
-                }
+        // Sort regular key events by timestamp (most recent first) to get the most recent keypress
+        regularKeyEvents.sort { $0.timestamp > $1.timestamp }
+        
+        // Add the most recent regular key if available
+        if let mostRecentKey = regularKeyEvents.first?.keyEvent, 
+           let character = mostRecentKey.characters,
+           !character.isEmpty {
+            if character.count == 1 {
+                text += character.uppercased()
+            } else {
+                // For special keys (e.g., arrow keys, function keys)
+                text += character
             }
         }
         
@@ -206,21 +235,27 @@ struct ShortcutVisualizer: View {
     
     private var modifierKeys: [KeyboardEvent] {
         events.compactMap { event in
-            guard let keyEvent = event.keyboardEvent, !keyEvent.modifiers.isEmpty else {
+            guard let keyEvent = event.keyboardEvent else {
                 return nil
             }
-            return keyEvent
+            // Consider a key as a modifier if it has modifiers OR it's a modifier key itself
+            if !keyEvent.modifiers.isEmpty || keyEvent.isModifierKey {
+                return keyEvent
+            }
+            return nil
         }
     }
     
     private var regularKeys: [KeyboardEvent] {
         events.compactMap { event in
-            guard let keyEvent = event.keyboardEvent, 
-                  keyEvent.modifiers.isEmpty, 
-                  keyEvent.key.count == 1 else {
+            guard let keyEvent = event.keyboardEvent else {
                 return nil
             }
-            return keyEvent
+            // A regular key is one that is not a modifier key itself and is being pressed
+            if !keyEvent.isModifierKey && keyEvent.isDown {
+                return keyEvent
+            }
+            return nil
         }
     }
     
@@ -228,19 +263,48 @@ struct ShortcutVisualizer: View {
         var text = ""
         
         // Add modifiers - collect all modifiers into a single set
-        var allModifiers: [KeyModifier] = []
+        var allModifiers: Set<KeyModifier> = []
+        
+        // First add modifiers from modifier keys
         for keyEvent in modifierKeys {
-            allModifiers.append(contentsOf: keyEvent.modifiers)
+            allModifiers.formUnion(keyEvent.modifiers)
+            
+            // Also check if the key itself is a modifier key (e.g., Command, Shift)
+            if keyEvent.isModifierKey {
+                // Map key code to modifier
+                for modifier in KeyModifier.allCases {
+                    if modifier.keyCode == keyEvent.keyCode {
+                        allModifiers.insert(modifier)
+                    }
+                }
+            }
         }
         
-        if allModifiers.contains(.command) { text += "⌘" }
-        if allModifiers.contains(.shift) { text += "⇧" }
-        if allModifiers.contains(.option) { text += "⌥" }
-        if allModifiers.contains(.control) { text += "⌃" }
+        // Sort modifiers in the standard order: Ctrl, Option, Shift, Command
+        let sortedModifiers = allModifiers.sorted { (a, b) -> Bool in
+            let order: [KeyModifier] = [.control, .option, .shift, .command]
+            return order.firstIndex(of: a) ?? 0 < order.firstIndex(of: b) ?? 0
+        }
+        
+        // Add the modifiers in sorted order
+        for modifier in sortedModifiers {
+            switch modifier {
+            case .command: text += "⌘"
+            case .shift: text += "⇧"
+            case .option: text += "⌥"
+            case .control: text += "⌃"
+            case .function: text += "fn"
+            case .capsLock: text += "⇪"
+            }
+        }
         
         // Add regular keys
-        if let regularKey = regularKeys.first?.key {
-            text += regularKey.uppercased()
+        if let regularKey = regularKeys.first {
+            if regularKey.key.count == 1 {
+                text += regularKey.key.uppercased()
+            } else {
+                text += regularKey.key
+            }
         }
         
         return text

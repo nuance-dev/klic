@@ -159,16 +159,18 @@ struct TrackpadVisualizer: View {
     @ViewBuilder
     private func gestureVisualization(for gesture: TrackpadGesture) -> some View {
         switch gesture.type {
+        case .tap(let count):
+            multiFingerTapVisualization(fingerCount: gesture.touches.count, tapCount: count)
         case .swipe(let direction):
             swipeVisualization(direction: direction, fingerCount: gesture.touches.count)
+        case .multiFingerSwipe(let direction, let fingerCount):
+            multiFingerSwipeVisualization(direction: direction, fingerCount: fingerCount)
         case .pinch:
             pinchVisualization(gesture: gesture)
         case .rotate:
             rotateVisualization(gesture: gesture)
-        case .tap(let count):
-            tapVisualization(count: count, fingerCount: gesture.touches.count)
-        case .scroll(let fingerCount, let deltaX, let deltaY):
-            scrollVisualization(fingerCount: fingerCount, deltaX: deltaX, deltaY: deltaY, isMomentum: gesture.isMomentumScroll)
+        case .scroll(_, let deltaX, let deltaY):
+            scrollVisualization(deltaX: deltaX, deltaY: deltaY, fingerCount: gesture.touches.count)
         }
     }
     
@@ -212,6 +214,24 @@ struct TrackpadVisualizer: View {
                 .position(x: 120, y: 120 / trackpadAspectRatio)
         }
         .opacity(animationProgress)
+    }
+    
+    @ViewBuilder
+    private func multiFingerSwipeVisualization(direction: TrackpadGesture.GestureType.SwipeDirection, fingerCount: Int) -> some View {
+        ZStack {
+            // Direction arrow
+            directionArrow(for: direction)
+                .stroke(Color.white, lineWidth: 2)
+                .frame(width: 60, height: 60)
+                .scaleEffect(isAnimating ? 1.2 : 1.0)
+                .animation(.easeInOut(duration: 0.3).repeatCount(2, autoreverses: true), value: isAnimating)
+            
+            // Finger count indicator
+            Text("\(fingerCount)")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+                .offset(y: -40)
+        }
     }
     
     @ViewBuilder
@@ -333,7 +353,7 @@ struct TrackpadVisualizer: View {
     }
     
     @ViewBuilder
-    private func scrollVisualization(fingerCount: Int, deltaX: CGFloat, deltaY: CGFloat, isMomentum: Bool) -> some View {
+    private func scrollVisualization(deltaX: CGFloat, deltaY: CGFloat, fingerCount: Int) -> some View {
         let direction: TrackpadGesture.GestureType.SwipeDirection = {
             if abs(deltaX) > abs(deltaY) {
                 return deltaX > 0 ? .right : .left
@@ -392,18 +412,6 @@ struct TrackpadVisualizer: View {
                 .foregroundColor(Color.white)
                 .frame(width: 12, height: 12)
                 .position(arrowHeadPosition(for: direction, arrowLength: arrowLength))
-            
-            // Momentum indicator
-            if isMomentum {
-                Text("momentum")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.3))
-                    .cornerRadius(4)
-                    .position(x: 120, y: (120 / trackpadAspectRatio) + 50)
-            }
             
             // Finger count indicator
             Text("\(fingerCount)")
@@ -473,6 +481,8 @@ struct TrackpadVisualizer: View {
         case .scroll(let fingerCount, _, _):
             let momentumText = gesture.isMomentumScroll ? " (momentum)" : ""
             return "\(fingerCount)-finger scroll\(momentumText)"
+        case .multiFingerSwipe(let direction, let fingerCount):
+            return "\(fingerCount)-finger multi-finger swipe \(direction)"
         }
     }
     
@@ -492,6 +502,8 @@ struct TrackpadVisualizer: View {
         case .scroll(let fingerCount, _, _):
             let momentumText = gesture.isMomentumScroll ? " (m)" : ""
             return "\(fingerCount)F scroll\(momentumText)"
+        case .multiFingerSwipe(let direction, let fingerCount):
+            return "\(fingerCount)F multi-finger swipe \(direction)"
         }
     }
     
@@ -523,6 +535,8 @@ struct TrackpadVisualizer: View {
             gesture.isMomentumScroll
                 ? Image(systemName: "scroll")
                 : Image(systemName: "hand.draw")
+        case .multiFingerSwipe(_, _):
+            Image(systemName: "hand.draw")
         }
     }
     
@@ -530,21 +544,40 @@ struct TrackpadVisualizer: View {
     
     private func handleNewGesture(_ gesture: TrackpadGesture) {
         // Update current gesture
-        withAnimation(.easeOut(duration: gestureFadeInDuration)) {
-            currentGesture = gesture
+        currentGesture = gesture
+        
+        // Reset animation state
+        isAnimating = true
+        animationProgress = 0
+        
+        // Animate gesture appearance
+        withAnimation(.easeIn(duration: gestureFadeInDuration)) {
             gestureOpacity = 1.0
-            
-            // Start animation
-            isAnimating = true
-            animationProgress = 1.0
         }
         
-        // Schedule fade out
+        // Schedule gesture fade-out
         DispatchQueue.main.asyncAfter(deadline: .now() + gestureDuration) {
-            withAnimation(.easeIn(duration: gestureFadeOutDuration)) {
+            withAnimation(.easeOut(duration: gestureFadeOutDuration)) {
                 gestureOpacity = 0
-                isAnimating = false
-                animationProgress = 0
+            }
+            
+            // Reset after animation completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + gestureFadeOutDuration) {
+                if self.gestureOpacity == 0 {
+                    self.currentGesture = nil
+                    self.isAnimating = false
+                }
+            }
+        }
+        
+        // Log gesture for debugging
+        Logger.debug("Visualizing gesture: \(gestureDescription(for: gesture))", log: Logger.trackpad)
+        
+        // For multi-finger gestures, provide enhanced visual feedback
+        if case .tap(let count) = gesture.type, gesture.touches.count >= 3 {
+            // Animate the gesture with a pulse effect
+            withAnimation(.easeInOut(duration: 0.3).repeatCount(2, autoreverses: true)) {
+                animationProgress = 1.0
             }
         }
     }
@@ -563,6 +596,96 @@ struct TrackpadVisualizer: View {
             }
         }
     }
+    
+    // MARK: - Enhanced Gesture Visualization
+    
+    // Enhanced multi-finger tap visualization
+    private func multiFingerTapVisualization(fingerCount: Int, tapCount: Int) -> some View {
+        ZStack {
+            // Background pulse for multi-finger gestures
+            if fingerCount >= 3 {
+                Circle()
+                    .stroke(Color.white.opacity(0.6), lineWidth: 2)
+                    .frame(width: 80 + CGFloat(fingerCount) * 10, height: 80 + CGFloat(fingerCount) * 10)
+                    .scaleEffect(1.0 + animationProgress * 0.3)
+                    .opacity(1.0 - animationProgress * 0.5)
+            }
+            
+            // Finger dots arranged in a pattern based on finger count
+            ForEach(0..<fingerCount, id: \.self) { index in
+                Circle()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width: 16, height: 16)
+                    .offset(fingerPositionForIndex(index: index, total: fingerCount, radius: 30))
+                    .scaleEffect(isAnimating ? 1.2 : 1.0)
+                    .animation(.easeInOut(duration: 0.2).repeatCount(tapCount, autoreverses: true), value: isAnimating)
+            }
+            
+            // Tap count indicator
+            if tapCount > 1 {
+                Text("\(tapCount)×")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+    }
+    
+    // Helper to position fingers in a circular pattern
+    private func fingerPositionForIndex(index: Int, total: Int, radius: CGFloat) -> CGSize {
+        if total == 1 {
+            return CGSize.zero
+        }
+        
+        let angle = (2.0 * .pi / CGFloat(total)) * CGFloat(index) - .pi / 2
+        return CGSize(
+            width: cos(angle) * radius,
+            height: sin(angle) * radius
+        )
+    }
+    
+    // MARK: - Helper Methods for Gesture Visualization
+    
+    // Create a direction arrow path based on the swipe direction
+    private func directionArrow(for direction: TrackpadGesture.GestureType.SwipeDirection) -> Path {
+        Path { path in
+            switch direction {
+            case .up:
+                // Up arrow
+                path.move(to: CGPoint(x: 30, y: 45))
+                path.addLine(to: CGPoint(x: 30, y: 15))
+                path.move(to: CGPoint(x: 20, y: 25))
+                path.addLine(to: CGPoint(x: 30, y: 15))
+                path.addLine(to: CGPoint(x: 40, y: 25))
+            case .down:
+                // Down arrow
+                path.move(to: CGPoint(x: 30, y: 15))
+                path.addLine(to: CGPoint(x: 30, y: 45))
+                path.move(to: CGPoint(x: 20, y: 35))
+                path.addLine(to: CGPoint(x: 30, y: 45))
+                path.addLine(to: CGPoint(x: 40, y: 35))
+            case .left:
+                // Left arrow
+                path.move(to: CGPoint(x: 45, y: 30))
+                path.addLine(to: CGPoint(x: 15, y: 30))
+                path.move(to: CGPoint(x: 25, y: 20))
+                path.addLine(to: CGPoint(x: 15, y: 30))
+                path.addLine(to: CGPoint(x: 25, y: 40))
+            case .right:
+                // Right arrow
+                path.move(to: CGPoint(x: 15, y: 30))
+                path.addLine(to: CGPoint(x: 45, y: 30))
+                path.move(to: CGPoint(x: 35, y: 20))
+                path.addLine(to: CGPoint(x: 45, y: 30))
+                path.addLine(to: CGPoint(x: 35, y: 40))
+            }
+        }
+    }
+    
+    // Helper to create a pulsing animation effect
+    private func pulsingAnimation(duration: Double = 1.0) -> Animation {
+        Animation.easeInOut(duration: duration)
+            .repeatForever(autoreverses: true)
+    }
 }
 
 // MARK: - Helper Shapes
@@ -577,6 +700,52 @@ struct Triangle: Shape {
         path.closeSubpath()
         
         return path
+    }
+}
+
+struct Arrow: View {
+    enum Direction {
+        case up, down, left, right
+    }
+    
+    let direction: Direction
+    let length: CGFloat
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let width = min(geometry.size.width, geometry.size.height) * 0.1
+            let arrowHeadSize = width * 3
+            
+            ZStack {
+                // Line
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(
+                        width: direction == .left || direction == .right ? length : width,
+                        height: direction == .up || direction == .down ? length : width
+                    )
+                
+                // Arrow head
+                Triangle()
+                    .fill(Color.accentColor)
+                    .frame(width: arrowHeadSize, height: arrowHeadSize)
+                    .rotationEffect(
+                        .degrees(
+                            direction == .up ? 0 :
+                            direction == .down ? 180 :
+                            direction == .left ? 270 :
+                            90
+                        )
+                    )
+                    .offset(
+                        x: direction == .right ? length / 2 :
+                           direction == .left ? -length / 2 : 0,
+                        y: direction == .down ? length / 2 :
+                           direction == .up ? -length / 2 : 0
+                    )
+            }
+            .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+        }
     }
 }
 

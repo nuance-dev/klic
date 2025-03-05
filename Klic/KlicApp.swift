@@ -13,7 +13,12 @@ final class AppDelegate: NSObject {
     private let useStatusBar = true
     
     // Status bar item reference to keep it from being deallocated
-    private var statusItem: NSStatusItem?
+    private var _statusItem: NSStatusItem?
+    
+    // Public accessor for statusItem
+    var statusItem: NSStatusItem? {
+        return _statusItem
+    }
     
     // Notification observers
     private var becomeKeyObserver: NSObjectProtocol?
@@ -70,6 +75,14 @@ final class AppDelegate: NSObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self?.setupMenuBar()
             }
+            
+            // Force the menu bar setup with another attempt after a longer delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                if self?.statusItem == nil {
+                    Logger.warning("Status bar not set up after initial attempt, trying again", log: Logger.app)
+                    self?.setupMenuBar()
+                }
+            }
         }
         
         Logger.info("AppDelegate initialized successfully", log: Logger.app)
@@ -101,7 +114,11 @@ final class AppDelegate: NSObject {
         
         // Check if app is active and running
         guard NSApp.isRunning else {
-            Logger.warning("Tried to setup menu bar before app is running", log: Logger.app)
+            Logger.warning("Tried to setup menu bar before app is running, will retry later", log: Logger.app)
+            // Schedule a retry after a short delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.setupMenuBar()
+            }
             return
         }
         
@@ -111,99 +128,95 @@ final class AppDelegate: NSObject {
             return
         }
         
-        do {
-            Logger.debug("Setting up menu bar", log: Logger.app)
+        Logger.debug("Setting up menu bar", log: Logger.app)
+        
+        // Create status item in the menu bar
+        let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        
+        if let button = newStatusItem.button {
+            // Create a more visually appealing template image
+            let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Klic")
+            image?.isTemplate = true // Make it a template image so it adapts to the menu bar
+            button.image = image
+            button.toolTip = "Klic Input Visualizer"
             
-            // Use try-catch to handle any potential exceptions
-            try autoreleasepool {
-                // Create status item in the menu bar
-                let newStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-                self.statusItem = newStatusItem
-                
-                if let button = newStatusItem.button {
-                    // Create a more visually appealing template image
-                    let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Klic")
-                    image?.isTemplate = true // Make it a template image so it adapts to the menu bar
-                    button.image = image
-                    button.toolTip = "Klic Input Visualizer"
-                } else {
-                    Logger.warning("Status item button is nil", log: Logger.app)
-                }
-                
-                // Create menu
-                let menu = NSMenu()
-                
-                // Add "Show Overlay Demo" item that shows example inputs
-                let showDemoItem = NSMenuItem(title: "Show Overlay Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
-                showDemoItem.keyEquivalentModifierMask = [.command, .option]
-                menu.addItem(showDemoItem)
-                
-                // Add "Show Overlay" item that just makes the overlay visible briefly
-                let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
-                showOverlayItem.keyEquivalentModifierMask = [.command]
-                menu.addItem(showOverlayItem)
-                
-                menu.addItem(NSMenuItem.separator())
-                
-                // Input Type Submenu
-                let inputTypesMenu = NSMenu()
-                
-                // Add toggle for keyboard
-                let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "k")
-                keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
-                inputTypesMenu.addItem(keyboardItem)
-                
-                // Add toggle for mouse
-                let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "m")
-                mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
-                inputTypesMenu.addItem(mouseItem)
-                
-                // Add toggle for trackpad
-                let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "t")
-                trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
-                inputTypesMenu.addItem(trackpadItem)
-                
-                // Add the Input Types submenu
-                let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
-                inputTypesMenuItem.submenu = inputTypesMenu
-                menu.addItem(inputTypesMenuItem)
-                
-                // Position Submenu
-                let positionMenu = NSMenu()
-                
-                // Add position options
-                for position in OverlayPosition.allCases {
-                    let positionItem = NSMenuItem(title: position.rawValue, action: #selector(setOverlayPosition(_:)), keyEquivalent: "")
-                    positionItem.tag = position.rawValue.hashValue
-                    let currentPosition = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
-                    positionItem.state = (position.rawValue == currentPosition) ? .on : .off
-                    positionMenu.addItem(positionItem)
-                }
-                
-                // Add the Position submenu
-                let positionMenuItem = NSMenuItem(title: "Overlay Position", action: nil, keyEquivalent: "")
-                positionMenuItem.submenu = positionMenu
-                menu.addItem(positionMenuItem)
-                
-                // Add preferences item
-                menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
-                
-                menu.addItem(NSMenuItem.separator())
-                
-                // Add "About Klic" item
-                menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
-                
-                menu.addItem(NSMenuItem.separator())
-                
-                // Add quit item
-                menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-                
-                newStatusItem.menu = menu
-                
-                Logger.info("Menu bar setup completed successfully", log: Logger.app)
+            // Create the menu once button is configured
+            let menu = NSMenu()
+            
+            // Add "Show Overlay Demo" item that shows example inputs
+            let showDemoItem = NSMenuItem(title: "Show Overlay Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
+            showDemoItem.keyEquivalentModifierMask = [.command, .option]
+            menu.addItem(showDemoItem)
+            
+            // Add "Show Overlay" item that just makes the overlay visible briefly
+            let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
+            showOverlayItem.keyEquivalentModifierMask = [.command]
+            menu.addItem(showOverlayItem)
+            
+            menu.addItem(NSMenuItem.separator())
+            
+            // Input Type Submenu
+            let inputTypesMenu = NSMenu()
+            
+            // Add toggle for keyboard
+            let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "k")
+            keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
+            inputTypesMenu.addItem(keyboardItem)
+            
+            // Add toggle for mouse
+            let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "m")
+            mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
+            inputTypesMenu.addItem(mouseItem)
+            
+            // Add toggle for trackpad
+            let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "t")
+            trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
+            inputTypesMenu.addItem(trackpadItem)
+            
+            // Add the Input Types submenu
+            let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
+            inputTypesMenuItem.submenu = inputTypesMenu
+            menu.addItem(inputTypesMenuItem)
+            
+            // Position Submenu
+            let positionMenu = NSMenu()
+            
+            // Add position options
+            for position in OverlayPosition.allCases {
+                let positionItem = NSMenuItem(title: position.rawValue, action: #selector(setOverlayPosition(_:)), keyEquivalent: "")
+                positionItem.tag = position.rawValue.hashValue
+                let currentPosition = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
+                positionItem.state = (position.rawValue == currentPosition) ? .on : .off
+                positionMenu.addItem(positionItem)
             }
-        } catch {
-            Logger.exception(error, context: "Setting up menu bar", log: Logger.app)
+            
+            // Add the Position submenu
+            let positionMenuItem = NSMenuItem(title: "Overlay Position", action: nil, keyEquivalent: "")
+            positionMenuItem.submenu = positionMenu
+            menu.addItem(positionMenuItem)
+            
+            // Add preferences item
+            menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+            
+            menu.addItem(NSMenuItem.separator())
+            
+            // Add "About Klic" item
+            menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
+            
+            menu.addItem(NSMenuItem.separator())
+            
+            // Add quit item
+            menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            
+            // Assign the menu to the status item
+            newStatusItem.menu = menu
+            
+            // Store the status item
+            self._statusItem = newStatusItem
+            
+            Logger.info("Menu bar setup successful", log: Logger.app)
+        } else {
+            Logger.warning("Status item button is nil", log: Logger.app)
         }
     }
     
@@ -541,7 +554,17 @@ struct KlicApp: App {
     @AppStorage("overlayOpacity") private var overlayOpacity: Double = 0.85
     
     // Hold a reference to our AppDelegate to prevent it from being deallocated
-    @State private var appDelegate = AppDelegate.shared
+    @State private var appDelegate: AppDelegate? = nil
+    
+    init() {
+        // Safely initialize the AppDelegate
+        if NSApplication.shared.isRunning {
+            self.appDelegate = AppDelegate.shared
+        } else {
+            // If NSApp isn't ready yet, we'll initialize it in onAppear
+            Logger.info("NSApp not ready during init, will initialize AppDelegate later", log: Logger.app)
+        }
+    }
     
     var body: some Scene {
         WindowGroup {
@@ -549,6 +572,10 @@ struct KlicApp: App {
                 .environmentObject(inputManager)
                 .background(Color.clear)
                 .onAppear {
+                    // Initialize AppDelegate if needed and setup the app
+                    if appDelegate == nil {
+                        self.appDelegate = AppDelegate.shared
+                    }
                     setupApp()
                 }
                 .sheet(isPresented: $isShowingPreferences) {
@@ -587,15 +614,27 @@ struct KlicApp: App {
     private func setupApp() {
         // Configure window appearance with a delay to ensure it's ready
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            appDelegate.configureWindowAppearance()
+            appDelegate?.configureWindowAppearance()
             
             // Try to setup menu bar again if needed
-            appDelegate.setupMenuBar()
+            appDelegate?.setupMenuBar()
+        }
+        
+        // Make another attempt after a longer delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if appDelegate?.statusItem == nil {
+                Logger.warning("Menu bar still not set up after initial delay, making additional attempt", log: Logger.app)
+                // Force the status bar setup
+                appDelegate?.setupMenuBar()
+                
+                // Make sure window is properly configured
+                appDelegate?.configureWindowAppearance()
+            }
         }
     }
     
     private func showOverlayFromMenu() {
-        appDelegate.showOverlayFromMenu()
+        appDelegate?.showOverlayFromMenu()
     }
 }
 

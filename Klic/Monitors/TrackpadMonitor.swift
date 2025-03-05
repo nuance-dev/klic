@@ -74,8 +74,26 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     private var momentumStartTime: Date?
     private var scrollTimeThreshold: TimeInterval = 0.1
     
+    // Multi-finger tracking improvements
+    private var lastMultiTouchCount: Int = 0
+    private var multiTouchStartTime: Date?
+    private let multiTouchRecognitionDelay: TimeInterval = 0.01 // Even shorter delay for quicker recognition
+    
+    // Enhanced sensitivity for multi-finger gestures (reduce threshold for faster detection)
+    private let multiFingerSwipeThreshold: CGFloat = 3.0 // Lower threshold for better sensitivity
+    
     // Lower the movement threshold for better gesture detection
-    private let movementThreshold: CGFloat = 1.5
+    private let movementThreshold: CGFloat = 0.5 // Further reduced for better sensitivity
+    
+    // Add more specific thresholds for different finger counts
+    private func getThresholdForFingerCount(_ count: Int) -> CGFloat {
+        switch count {
+        case 3: return 2.0  // Very sensitive for 3-finger gestures
+        case 4: return 1.5  // Even more sensitive for 4-finger gestures
+        case 5: return 1.0  // Most sensitive for 5-finger gestures
+        default: return multiFingerSwipeThreshold
+        }
+    }
     
     // Storage for previous touches to compare movement
     private var previousTouches: [FingerTouch] = []
@@ -95,7 +113,7 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     // Right-click detection
     private var rightClickDetectionTimer: Timer?
     private var potentialRightClickTouches: [NSTouch] = []
-    private let rightClickThreshold: TimeInterval = 0.25 // Lower threshold for faster right-click detection
+    private let rightClickThreshold: TimeInterval = 0.20 // Lower threshold for faster right-click detection
     
     // Create property for storing previous positions
     private var previousPositions: [CGPoint]?
@@ -214,28 +232,45 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             }
         }
         
+        // Track multi-finger touches - improved for better recognition
+        let touchCount = touches.count
+        lastMultiTouchCount = touchCount
+        multiTouchStartTime = Date()
+        
+        // Log multi-finger gestures to help with debugging
+        if touchCount >= 3 {
+            Logger.debug("Multi-finger touch detected: \(touchCount) fingers", log: Logger.trackpad)
+            
+            // Immediate detection for multi-finger touches (3+)
+            detectMultiFingerGesture(touches: touches)
+        }
+        
         // If we have exactly two touches that just began, start a timer for right-click detection
-        if touches.count == 2 && newTouches.count == 2 {
+        if touchCount == 2 && newTouches.count == 2 {
             potentialRightClickTouches = Array(touches)
             rightClickDetectionTimer?.invalidate()
             rightClickDetectionTimer = Timer.scheduledTimer(withTimeInterval: rightClickThreshold, repeats: false) { [weak self] _ in
                 self?.checkForRightClick()
             }
         } else {
-            // More than two touches, cancel right-click detection
+            // Clear right-click detection for other gestures
             rightClickDetectionTimer?.invalidate()
             potentialRightClickTouches.removeAll()
-        }
-        
-        if !newTouches.isEmpty {
-            // Notify delegate
-            delegate?.trackpadTouchesBegan(touches: newTouches)
             
-            // Create and publish event
-            let touchEvent = InputEvent.trackpadTouchEvent(touches: newTouches)
+            // For all touch counts, notify delegate
+            let allFingerTouches = Array(touchIdentityMap.values) 
+            self.delegate?.trackpadTouchesBegan(touches: allFingerTouches)
             
-            DispatchQueue.main.async {
-                self.currentEvents.append(touchEvent)
+            // Create and publish events for all touch counts
+            if touchCount > 0 {
+                let touchEvent = InputEvent.trackpadTouchEvent(touches: allFingerTouches)
+                
+                DispatchQueue.main.async {
+                    // Add the event without duplicates
+                    if !self.currentEvents.contains(where: { $0.type == .trackpadTouch }) {
+                        self.currentEvents.append(touchEvent)
+                    }
+                }
             }
         }
     }
@@ -519,8 +554,18 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         let totalMovement = hypot(deltaX, deltaY)
         let magnitude = min(1.0, totalMovement * 1.5) // Increase multiplier for better visualization
         
-        // Create gesture type with direction
-        let gestureType = TrackpadGesture.GestureType.swipe(direction: swipeDirection)
+        // Create gesture type with direction and finger count for better visualization
+        let fingerCount = touches.count
+        let gestureType: TrackpadGesture.GestureType
+        
+        // Classify based on finger count for better multi-finger detection
+        if fingerCount >= 4 {
+            // Special handling for 4+ finger gestures
+            gestureType = .multiFingerSwipe(direction: swipeDirection, fingerCount: fingerCount)
+            Logger.debug("Multi-finger swipe (\(fingerCount) fingers): \(swipeDirection)", log: Logger.trackpad)
+        } else {
+            gestureType = .swipe(direction: swipeDirection)
+        }
         
         // Create and publish gesture event
         let gesture = TrackpadGesture(
@@ -534,7 +579,7 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         publishGestureEvent(gesture)
         
         // Log the direction for debugging
-        Logger.debug("Swipe direction: \(swipeDirection), magnitude: \(magnitude)", log: Logger.trackpad)
+        Logger.debug("Swipe direction: \(swipeDirection), magnitude: \(magnitude), fingers: \(fingerCount)", log: Logger.trackpad)
     }
     
     private func cleanupStaleTouches() {
@@ -874,8 +919,14 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             y: sumY / CGFloat(positions.count)
         )
         
+        // Log for debugging
+        Logger.debug("4+ finger gesture detected with \(fingerCount) fingers", log: Logger.trackpad)
+        
         // Get previous centroids if we have them stored
-        if let prevPositions = previousPositions, prevPositions.count == fingerCount {
+        if let prevPositions = previousPositions, prevPositions.count > 0 {
+            // For better 4+ finger detection, we don't require exact finger count match
+            // This allows for more reliable detection even if finger count changes slightly
+            
             // Calculate previous centroid - breaking up for better type checking
             var prevSumX: CGFloat = 0
             var prevSumY: CGFloat = 0
@@ -893,8 +944,11 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             let deltaX = centroid.x - avgPrevCentroid.x
             let deltaY = centroid.y - avgPrevCentroid.y
             
+            // Use lower threshold for 4+ finger gestures
+            let swipeThreshold = getThresholdForFingerCount(fingerCount)
+            
             // Detect swipe direction based on the delta
-            if abs(deltaX) > 0.01 || abs(deltaY) > 0.01 {
+            if abs(deltaX) > swipeThreshold || abs(deltaY) > swipeThreshold {
                 // Determine swipe direction
                 let isHorizontal = abs(deltaX) > abs(deltaY)
                 let isPositive = isHorizontal ? deltaX > 0 : deltaY > 0
@@ -903,46 +957,32 @@ class TrackpadMonitor: NSResponder, ObservableObject {
                 
                 if isHorizontal {
                     direction = isPositive ? .right : .left
+                    Logger.debug("4+ finger horizontal swipe: \(direction)", log: Logger.trackpad)
                 } else {
                     direction = isPositive ? .down : .up
+                    Logger.debug("4+ finger vertical swipe: \(direction)", log: Logger.trackpad)
                 }
                 
-                // Create a swipe gesture with the appropriate finger count
-                let magnitude = max(abs(deltaX), abs(deltaY))
-                let gesture = TrackpadGesture(
+                // Create and dispatch swipe gesture
+                let swipeGesture = TrackpadGesture(
                     type: .swipe(direction: direction),
                     touches: fingerTouches,
-                    magnitude: magnitude,
-                    rotation: nil,
-                    isMomentumScroll: false
+                    magnitude: isHorizontal ? abs(deltaX) : abs(deltaY),
+                    rotation: nil
                 )
                 
-                // Send the gesture event
-                let inputEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
-                
+                // Dispatch event
+                let event = InputEvent.trackpadGestureEvent(gesture: swipeGesture)
                 DispatchQueue.main.async {
-                    // Remove existing swipe gestures - breaking up complex conditions
-                    self.currentEvents.removeAll { event in
-                        if let gesture = event.trackpadGesture {
-                            if case .swipe = gesture.type {
-                                if gesture.touches.count == fingerCount {
-                                    return true
-                                }
-                            }
-                        }
-                        return false
-                    }
-                    
-                    // Add the new event
-                    self.currentEvents.append(inputEvent)
+                    self.currentEvents = [event]
+                    self.eventSubject.send(event)
                 }
                 
-                // Notify delegate about the gesture
-                delegate?.trackpadMonitorDidDetectGesture(gesture)
+                // Notify delegate
+                delegate?.trackpadMonitorDidDetectGesture(swipeGesture)
                 
-                // Log the detection
-                let gestureDescription = "\(fingerCount)-finger swipe detected: \(direction), magnitude: \(magnitude)"
-                Logger.debug(gestureDescription, log: Logger.trackpad)
+                // Update previous gesture
+                previousGesture = swipeGesture
             }
         }
         
@@ -1166,6 +1206,65 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         
         // Store current positions for next comparison
         previousPositions = positions
+    }
+    
+    // MARK: - Enhanced Touch Processing
+    
+    private func detectMultiFingerGesture(touches: Set<NSTouch>) {
+        // Get the finger count
+        let fingerCount = touches.count
+        
+        // Early return if we don't have enough fingers
+        if fingerCount < 3 {
+            return
+        }
+        
+        Logger.debug("Detecting multi-finger gesture with \(fingerCount) fingers", log: Logger.trackpad)
+        
+        // Convert NSTouch objects to FingerTouch objects
+        let fingerTouches = touches.map { createFingerTouchFromNSTouch(nsTouch: $0) }
+        
+        // Create a multi-finger tap gesture
+        let gestureType = TrackpadGesture.GestureType.tap(count: fingerCount)
+        let gesture = TrackpadGesture(
+            type: gestureType,
+            touches: fingerTouches,
+            magnitude: CGFloat(fingerCount) / 5.0, // Scale magnitude by finger count
+            rotation: nil,
+            isMomentumScroll: false
+        )
+        
+        // Send the gesture to the delegate
+        self.delegate?.trackpadMonitorDidDetectGesture(gesture)
+        
+        // Create and publish a trackpad event
+        let trackpadEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+        
+        // Clear any existing multi-finger gestures to avoid duplicates
+        DispatchQueue.main.async {
+            // Remove existing multi-finger taps
+            self.currentEvents.removeAll { event in
+                if let gestureEvent = event.trackpadGesture?.type {
+                    if case .tap = gestureEvent {
+                        return true
+                    }
+                }
+                return false
+            }
+            
+            // Add the new event
+            self.currentEvents.append(trackpadEvent)
+            
+            // Notify system that we've detected a gesture
+            NotificationCenter.default.post(
+                name: NSNotification.Name("TrackpadGestureDetected"),
+                object: nil,
+                userInfo: ["fingerCount": fingerCount]
+            )
+            
+            // Log the detection
+            Logger.info("Detected \(fingerCount)-finger tap gesture", log: Logger.trackpad)
+        }
     }
 }
 

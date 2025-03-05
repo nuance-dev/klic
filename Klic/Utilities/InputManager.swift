@@ -63,12 +63,17 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         // Subscribe to keyboard events
         keyboardMonitor.$currentEvents
             .receive(on: RunLoop.main)
+            .removeDuplicates()
             .sink { [weak self] events in
                 guard let self = self else { return }
                 if !events.isEmpty {
                     // Filter repeat events when typing fast to avoid clutter
                     let filteredEvents = self.filterRepeatKeyEvents(events)
-                    self.keyboardEvents = Array(filteredEvents.prefix(self.maxKeyboardEvents))
+                    
+                    // Clean up any duplicate events that might have slipped through
+                    let uniqueEvents = self.removeDuplicateEvents(filteredEvents)
+                    
+                    self.keyboardEvents = Array(uniqueEvents.prefix(self.maxKeyboardEvents))
                     self.updateActiveInputTypes(adding: .keyboard, removing: events.isEmpty)
                     self.updateAllEvents()
                     self.showOverlay()
@@ -84,6 +89,7 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         // Subscribe to mouse events
         mouseMonitor.$currentEvents
             .receive(on: RunLoop.main)
+            .removeDuplicates()
             .sink { [weak self] events in
                 guard let self = self else { return }
                 if !events.isEmpty {
@@ -640,5 +646,24 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
                 }
             }
         }
+    }
+    
+    private func removeDuplicateEvents(_ events: [InputEvent]) -> [InputEvent] {
+        var uniqueEvents: [InputEvent] = []
+        var seenKeys: Set<String> = []
+        
+        for event in events {
+            if let keyEvent = event.keyboardEvent {
+                let key = "\(keyEvent.key):\(keyEvent.isDown):\(keyEvent.modifiers.description)"
+                if !seenKeys.contains(key) {
+                    seenKeys.insert(key)
+                    uniqueEvents.append(event)
+                }
+            } else {
+                uniqueEvents.append(event)
+            }
+        }
+        
+        return uniqueEvents
     }
 } 

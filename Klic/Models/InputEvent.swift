@@ -106,6 +106,7 @@ struct TrackpadGesture: Equatable {
         case pinch
         case rotate
         case swipe(direction: SwipeDirection)
+        case multiFingerSwipe(direction: SwipeDirection, fingerCount: Int)
         case tap(count: Int)
         case scroll(fingerCount: Int, deltaX: CGFloat, deltaY: CGFloat)
         
