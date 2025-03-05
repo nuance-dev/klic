@@ -109,44 +109,22 @@ struct TrackpadVisualizer: View {
         VStack(spacing: 8) {
             // Gesture visualization
             ZStack {
-                // Trackpad outline with enhanced visibility
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1.5) // Made more visible
-                    .aspectRatio(trackpadAspectRatio, contentMode: .fit)
-                    .frame(maxWidth: 240)
-                    .background(Color.black.opacity(0.2))
-                    .cornerRadius(12)
-                
-                // Bright highlight to show this is active
+                // Trackpad outline
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.white.opacity(0.2), lineWidth: 1)
                     .aspectRatio(trackpadAspectRatio, contentMode: .fit)
                     .frame(maxWidth: 240)
-                    .scaleEffect(isAnimating ? 1.05 : 1.0)
-                    .animation(Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
                 
-                // Touch points with enhanced visibility
+                // Touch points
                 ForEach(activeTouches, id: \.id) { touch in
-                    ZStack {
-                        // Outer glow for better visibility
-                        Circle()
-                            .foregroundColor(Color.white.opacity(0.3))
-                            .frame(width: 24, height: 24)
-                            .position(
-                                x: touch.position.x * 240,
-                                y: touch.position.y * (240 / trackpadAspectRatio)
-                            )
-                        
-                        // Main touch point
-                        Circle()
-                            .foregroundColor(Color.white.opacity(0.8))
-                            .frame(width: 16, height: 16)
-                            .position(
-                                x: touch.position.x * 240,
-                                y: touch.position.y * (240 / trackpadAspectRatio)
-                            )
-                    }
-                    .opacity(touchesOpacity)
+                    Circle()
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .frame(width: 16, height: 16)
+                        .position(
+                            x: touch.position.x * 240,
+                            y: touch.position.y * (240 / trackpadAspectRatio)
+                        )
+                        .opacity(touchesOpacity)
                 }
                 
                 // Gesture visualization
@@ -156,23 +134,23 @@ struct TrackpadVisualizer: View {
                 }
             }
             .frame(maxWidth: 240, maxHeight: 240 / trackpadAspectRatio)
-            .background(Color.black.opacity(0.3))
+            .background(Color.black.opacity(0.2))
             .cornerRadius(12)
             
-            // Gesture description with enhanced visibility
+            // Gesture description
             if let gesture = currentGesture {
                 Text(gestureDescription(for: gesture))
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.6))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.4))
                     .cornerRadius(8)
                     .opacity(gestureOpacity)
             }
         }
         .padding(12)
-        .background(Color.black.opacity(0.5)) // Increased opacity for better visibility
+        .background(Color.black.opacity(0.3))
         .cornerRadius(16)
     }
     
@@ -596,19 +574,19 @@ struct TrackpadVisualizer: View {
         // Log what we received
         Logger.debug("Displaying trackpad gesture: \(gesture.type)", log: Logger.trackpad)
         
-        // Start the animation immediately
-        isAnimating = true
-        
-        // Fade in the gesture visualization with more dramatic animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        // Fade in the gesture visualization
+        withAnimation(.easeIn(duration: gestureFadeInDuration)) {
             gestureOpacity = 1.0
+        }
+        
+        // Start the animation for the gesture
+        isAnimating = true
+        withAnimation(.easeInOut(duration: 0.5).repeatCount(2, autoreverses: true)) {
             animationProgress = 1.0
         }
         
-        // Schedule the fade out after the gesture duration, but with a longer duration
-        let displayDuration = gestureDuration * 1.5 // 50% longer display time
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + displayDuration) {
+        // Schedule the fade out after the gesture duration
+        DispatchQueue.main.asyncAfter(deadline: .now() + gestureDuration) {
             // Only fade out if this is still the current gesture
             if self.currentGesture?.id == gesture.id {
                 withAnimation(.easeOut(duration: self.gestureFadeOutDuration)) {
@@ -625,13 +603,6 @@ struct TrackpadVisualizer: View {
                 }
             }
         }
-        
-        // Post notification about gesture detection for wider system awareness
-        NotificationCenter.default.post(
-            name: NSNotification.Name("TrackpadGestureVisualized"),
-            object: nil,
-            userInfo: ["gestureType": String(describing: gesture.type)]
-        )
     }
     
     private func handleNewTouches(_ touches: [FingerTouch]) {

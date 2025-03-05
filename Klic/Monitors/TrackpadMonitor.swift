@@ -720,17 +720,10 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     
     override func scrollWheel(with event: NSEvent) {
         super.scrollWheel(with: event)
-        
-        // Log the event to debug what's happening with trackpad events
-        Logger.debug("TrackpadMonitor received scrollWheel event: phase: \(event.phase), momentum: \(event.momentumPhase), precise: \(event.hasPreciseScrollingDeltas)", log: Logger.trackpad)
-        
         processScrollWheelEvent(event: event)
     }
     
     private func processScrollWheelEvent(event: NSEvent) {
-        // Force process all scroll events, regardless of source
-        // This ensures that trackpad scrolls are captured even if they're being sent as mouse events
-        
         // Detect momentum scrolling
         if event.momentumPhase != [] {
             // This is a momentum scroll event
@@ -739,9 +732,6 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             
             // Create momentum scroll event
             processMomentumScrollEvent(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
-            
-            // Log the momentum event for debugging
-            Logger.debug("Processing momentum scroll with delta (\(event.scrollingDeltaX), \(event.scrollingDeltaY))", log: Logger.trackpad)
             return
         }
         
@@ -751,16 +741,13 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             momentumStartTime = nil
         }
         
-        // Process regular scroll events with enhanced logging
+        // Process regular scroll events
         processTrackpadScrollEvent(
             deltaX: event.scrollingDeltaX,
             deltaY: event.scrollingDeltaY,
             phase: event.phase,
             event: event
         )
-        
-        // Log the event for debugging
-        Logger.debug("Processed trackpad scroll with delta (\(event.scrollingDeltaX), \(event.scrollingDeltaY)), phase: \(event.phase)", log: Logger.trackpad)
     }
     
     private func processTrackpadScrollEvent(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase, event: NSEvent) {
@@ -887,316 +874,16 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         // Explicitly accept touch events
         NSApp.windows.forEach { $0.acceptsTouchEvents = true }
         
-        // Direct event monitoring for trackpad gestures using NSEvent global monitors
-        // This approach is more reliable for capturing trackpad events
-        
-        // Monitor for magnification gestures (pinch)
-        NSEvent.addGlobalMonitorForEvents(matching: .magnify) { [weak self] event in
-            guard let self = self, self.isMonitoring else { return }
-            
-            // Create a synthetic pinch gesture
-            let magnitude = event.magnification
-            let centerPosition = CGPoint(x: 0.5, y: 0.5)
-            
-            let touch1 = FingerTouch(
-                id: self.nextTouchID(),
-                position: CGPoint(x: 0.4, y: 0.5),
-                pressure: 0.8,
-                majorRadius: 10,
-                minorRadius: 10,
-                fingerType: .index,
-                timestamp: Date()
-            )
-            
-            let touch2 = FingerTouch(
-                id: self.nextTouchID(),
-                position: CGPoint(x: 0.6, y: 0.5),
-                pressure: 0.8,
-                majorRadius: 10,
-                minorRadius: 10,
-                fingerType: .thumb,
-                timestamp: Date()
-            )
-            
-            let gesture = TrackpadGesture(
-                type: .pinch,
-                touches: [touch1, touch2],
-                magnitude: magnitude,
-                rotation: nil,
-                isMomentumScroll: false
-            )
-            
-            // Publish the gesture
-            self.publishGestureEvent(gesture)
-            Logger.debug("Detected magnification/pinch gesture: \(magnitude)", log: Logger.trackpad)
-        }
-        
-        // Monitor for rotation gestures
-        NSEvent.addGlobalMonitorForEvents(matching: .rotate) { [weak self] event in
-            guard let self = self, self.isMonitoring else { return }
-            
-            // Create a synthetic rotation gesture
-            let rotation = event.rotation
-            let centerPosition = CGPoint(x: 0.5, y: 0.5)
-            
-            let touch1 = FingerTouch(
-                id: self.nextTouchID(),
-                position: CGPoint(x: 0.4, y: 0.6),
-                pressure: 0.8,
-                majorRadius: 10,
-                minorRadius: 10,
-                fingerType: .index,
-                timestamp: Date()
-            )
-            
-            let touch2 = FingerTouch(
-                id: self.nextTouchID(),
-                position: CGPoint(x: 0.6, y: 0.4),
-                pressure: 0.8,
-                majorRadius: 10,
-                minorRadius: 10,
-                fingerType: .thumb,
-                timestamp: Date()
-            )
-            
-            let gesture = TrackpadGesture(
-                type: .rotate,
-                touches: [touch1, touch2],
-                magnitude: abs(rotation / 30),
-                rotation: rotation,
-                isMomentumScroll: false
-            )
-            
-            // Publish the gesture
-            self.publishGestureEvent(gesture)
-            Logger.debug("Detected rotation gesture: \(rotation)", log: Logger.trackpad)
-        }
-        
-        // Monitor for swipe gestures
-        NSEvent.addGlobalMonitorForEvents(matching: .swipe) { [weak self] event in
-            guard let self = self, self.isMonitoring else { return }
-            
-            // Determine swipe direction
-            let deltaX = event.deltaX
-            let deltaY = event.deltaY
-            
-            var direction: TrackpadGesture.GestureType.SwipeDirection
-            if abs(deltaX) > abs(deltaY) {
-                direction = deltaX > 0 ? .right : .left
-            } else {
-                direction = deltaY > 0 ? .up : .down
-            }
-            
-            // Default to 3 fingers for swipe events from NSEvent
-            let fingerCount = 3
-            
-            // Create finger touches in a swipe pattern
-            var touches: [FingerTouch] = []
-            for i in 0..<fingerCount {
-                let offsetY = CGFloat(i - fingerCount/2) * 0.1
-                
-                let touch = FingerTouch(
-                    id: self.nextTouchID(),
-                    position: CGPoint(x: 0.5, y: 0.5 + offsetY),
-                    pressure: 0.7,
-                    majorRadius: 10,
-                    minorRadius: 10,
-                    fingerType: .unknown,
-                    timestamp: Date()
-                )
-                touches.append(touch)
-            }
-            
-            let gesture = TrackpadGesture(
-                type: .multiFingerSwipe(direction: direction, fingerCount: fingerCount),
-                touches: touches,
-                magnitude: 1.0,
-                rotation: nil,
-                isMomentumScroll: false
-            )
-            
-            // Publish the gesture
-            self.publishGestureEvent(gesture)
-            Logger.debug("Detected swipe gesture: \(direction) with delta (\(deltaX), \(deltaY))", log: Logger.trackpad)
-        }
-        
-        // More reliable handler for trackpad scrolling
-        NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self = self, self.isMonitoring else { return }
-            
-            // Only process if it's clearly a trackpad event
-            if event.hasPreciseScrollingDeltas || event.phase != [] || event.momentumPhase != [] {
-                // This is almost certainly a trackpad event
-                self.processTrackpadScrollEvent(
-                    deltaX: event.scrollingDeltaX,
-                    deltaY: event.scrollingDeltaY,
-                    phase: event.phase,
-                    event: event
-                )
-                
-                Logger.debug("Detected trackpad scroll: (\(event.scrollingDeltaX), \(event.scrollingDeltaY)), phase: \(event.phase)", log: Logger.trackpad)
-            }
-        }
-        
-        // Add the local monitors as well for good measure
-        NSEvent.addLocalMonitorForEvents(matching: .magnify) { [weak self] event in
-            self?.processLocalMagnify(event)
-            return event
-        }
-        
-        NSEvent.addLocalMonitorForEvents(matching: .rotate) { [weak self] event in
-            self?.processLocalRotate(event)
-            return event
-        }
-        
-        NSEvent.addLocalMonitorForEvents(matching: .swipe) { [weak self] event in
-            self?.processLocalSwipe(event)
-            return event
-        }
-        
-        // Register for scroll wheel notifications globally and locally
-        NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self = self, self.isMonitoring else { return event }
-            
-            // Check if it's a trackpad scroll event
-            if event.hasPreciseScrollingDeltas || event.phase != [] || event.momentumPhase != [] {
-                self.processScrollWheelEvent(event: event)
-            }
-            
-            return event
-        }
+        // Lower detection thresholds for better sensitivity
+        // This will make it easier to detect multi-finger gestures
         
         isMonitoring = true
-        Logger.info("Trackpad monitoring started with low-level gesture detection", log: Logger.trackpad)
+        Logger.info("Trackpad monitoring started", log: Logger.trackpad)
         
         // Output a debug gesture immediately to verify system
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.triggerDebugGesture()
         }
-    }
-    
-    // Additional local event handling functions
-    private func processLocalMagnify(_ event: NSEvent) -> Void {
-        guard isMonitoring else { return }
-        
-        // Create and publish a magnify (pinch) gesture
-        let magnitude = event.magnification
-        let touch1 = FingerTouch(
-            id: nextTouchID(),
-            position: CGPoint(x: 0.4, y: 0.5),
-            pressure: 0.8,
-            majorRadius: 10,
-            minorRadius: 10,
-            fingerType: .index,
-            timestamp: Date()
-        )
-        
-        let touch2 = FingerTouch(
-            id: nextTouchID(),
-            position: CGPoint(x: 0.6, y: 0.5),
-            pressure: 0.8,
-            majorRadius: 10,
-            minorRadius: 10,
-            fingerType: .thumb,
-            timestamp: Date()
-        )
-        
-        let gesture = TrackpadGesture(
-            type: .pinch,
-            touches: [touch1, touch2],
-            magnitude: magnitude,
-            rotation: nil,
-            isMomentumScroll: false
-        )
-        
-        // Publish the gesture
-        publishGestureEvent(gesture)
-        Logger.debug("Local magnification/pinch gesture detected: \(magnitude)", log: Logger.trackpad)
-    }
-    
-    private func processLocalRotate(_ event: NSEvent) -> Void {
-        guard isMonitoring else { return }
-        
-        // Create and publish a rotation gesture
-        let rotation = event.rotation
-        let touch1 = FingerTouch(
-            id: nextTouchID(),
-            position: CGPoint(x: 0.4, y: 0.6),
-            pressure: 0.8,
-            majorRadius: 10,
-            minorRadius: 10,
-            fingerType: .index,
-            timestamp: Date()
-        )
-        
-        let touch2 = FingerTouch(
-            id: nextTouchID(),
-            position: CGPoint(x: 0.6, y: 0.4),
-            pressure: 0.8,
-            majorRadius: 10,
-            minorRadius: 10,
-            fingerType: .thumb,
-            timestamp: Date()
-        )
-        
-        let gesture = TrackpadGesture(
-            type: .rotate,
-            touches: [touch1, touch2],
-            magnitude: abs(rotation / 30),
-            rotation: rotation,
-            isMomentumScroll: false
-        )
-        
-        // Publish the gesture
-        publishGestureEvent(gesture)
-        Logger.debug("Local rotation gesture detected: \(rotation)", log: Logger.trackpad)
-    }
-    
-    private func processLocalSwipe(_ event: NSEvent) -> Void {
-        guard isMonitoring else { return }
-        
-        // Determine swipe direction
-        let deltaX = event.deltaX
-        let deltaY = event.deltaY
-        
-        var direction: TrackpadGesture.GestureType.SwipeDirection
-        if abs(deltaX) > abs(deltaY) {
-            direction = deltaX > 0 ? .right : .left
-        } else {
-            direction = deltaY > 0 ? .up : .down
-        }
-        
-        // Default to 3 fingers for swipe events
-        let fingerCount = 3
-        
-        // Create finger touches in a row
-        var touches: [FingerTouch] = []
-        for i in 0..<fingerCount {
-            let offsetX = CGFloat(i - fingerCount/2) * 0.15
-            
-            let touch = FingerTouch(
-                id: nextTouchID(),
-                position: CGPoint(x: 0.5 + offsetX, y: 0.5),
-                pressure: 0.7,
-                majorRadius: 10,
-                minorRadius: 10,
-                fingerType: .unknown,
-                timestamp: Date()
-            )
-            touches.append(touch)
-        }
-        
-        let gesture = TrackpadGesture(
-            type: .multiFingerSwipe(direction: direction, fingerCount: fingerCount),
-            touches: touches,
-            magnitude: 1.0,
-            rotation: nil,
-            isMomentumScroll: false
-        )
-        
-        // Publish the gesture
-        publishGestureEvent(gesture)
-        Logger.debug("Local swipe gesture detected: \(direction)", log: Logger.trackpad)
     }
     
     func stopMonitoring() {
@@ -1210,8 +897,6 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             self.currentEvents.removeAll()
             self.rawTouches.removeAll()
         }
-        
-        // Note: We can't remove global monitors once added, but they'll be inactive when isMonitoring is false
     }
     
     private func detectTrackpadBounds() {

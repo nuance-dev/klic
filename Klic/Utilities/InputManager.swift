@@ -89,35 +89,22 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
             }
             .store(in: &cancellables)
         
-        // Subscribe to mouse events, but filter out likely trackpad events
+        // Subscribe to mouse events
         mouseMonitor.$currentEvents
             .receive(on: RunLoop.main)
             .removeDuplicates()
             .sink { [weak self] events in
                 guard let self = self else { return }
                 if !events.isEmpty {
-                    // Filter out any events that might actually be trackpad events
-                    let filteredEvents = events.filter { event in
-                        // If it's a scroll event, it could be a trackpad event
-                        if let mouseEvent = event.mouseEvent, mouseEvent.scrollDelta != nil {
-                            // Let's check for specific trackpad indicators
-                            if mouseEvent.isMomentumScroll {
-                                // Momentum scrolling is a trackpad feature
-                                return false
-                            }
-                        }
-                        return true
-                    }
-                    
-                    self.mouseEvents = Array(filteredEvents.prefix(self.maxMouseEvents))
-                    self.updateActiveInputTypes(adding: .mouse, removing: filteredEvents.isEmpty)
+                    self.mouseEvents = Array(events.prefix(self.maxMouseEvents))
+                    self.updateActiveInputTypes(adding: .mouse, removing: events.isEmpty)
                     self.updateAllEvents()
                     self.showOverlay()
                     
                     // Set a timer to clear this event type
                     self.scheduleClearEventTimer(for: .mouse)
                     
-                    Logger.debug("Received \(events.count) mouse events, filtered to \(filteredEvents.count)", log: Logger.app)
+                    Logger.debug("Received \(events.count) mouse events", log: Logger.app)
                 }
             }
             .store(in: &cancellables)
@@ -133,7 +120,7 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
                     self.updateAllEvents()
                     self.showOverlay()
                     
-                    // Set a timer to clear this event type with longer visibility
+                    // Set a timer to clear this event type
                     self.scheduleClearEventTimer(for: .trackpad)
                     
                     Logger.debug("Received \(events.count) trackpad events", log: Logger.app)
@@ -153,28 +140,9 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
                     
                     // Set a timer to clear touches
                     self.scheduleClearEventTimer(for: .trackpad)
-                    
-                    Logger.debug("Received \(touches.count) raw trackpad touches", log: Logger.app)
                 }
             }
             .store(in: &cancellables)
-        
-        // Add explicit listeners for trackpad gesture notifications
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("TrackpadGestureDetected"),
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let self = self else { return }
-            
-            if let fingerCount = notification.userInfo?["fingerCount"] as? Int {
-                Logger.debug("Received trackpad gesture notification with \(fingerCount) fingers", log: Logger.app)
-                
-                // Force the trackpad input type to be active
-                self.updateActiveInputTypes(adding: .trackpad)
-                self.showOverlay()
-            }
-        }
         
         Logger.debug("Input subscriptions set up", log: Logger.app)
         
@@ -259,7 +227,7 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         return events
     }
     
-    internal func updateActiveInputTypes(adding type: InputType? = nil, removing isEmpty: Bool = false) {
+    private func updateActiveInputTypes(adding type: InputType? = nil, removing isEmpty: Bool = false) {
         if let type = type, !isEmpty {
             activeInputTypes.insert(type)
         } else if let type = type, isEmpty {
@@ -703,16 +671,5 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         }
         
         return uniqueEvents
-    }
-    
-    // Add a helper method to set trackpad events
-    internal func setTrackpadEvents(_ events: [InputEvent]) {
-        self.trackpadEvents = events
-    }
-    
-    // Make updateAllEvents more accessible
-    internal func updateAndShowEvents() {
-        self.updateAllEvents()
-        self.showOverlay()
     }
 } 
