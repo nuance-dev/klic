@@ -51,7 +51,7 @@ class KeyboardMonitor: ObservableObject {
     }
     
     private func setupSubscription() {
-        // Subscribe to keyboard events and update current events
+        // Complete rewrite of the subscription logic to prevent duplicates
         eventSubject
             .receive(on: RunLoop.main)
             .sink { [weak self] event in
@@ -60,26 +60,53 @@ class KeyboardMonitor: ObservableObject {
                 // Extract keyboard event if present
                 guard let newKeyEvent = event.keyboardEvent else { return }
                 
-                // More aggressive duplicate filtering - completely replace duplicates
-                // Find any existing event with the same key code and state
-                if let existingIndex = self.currentEvents.firstIndex(where: { existingEvent in
+                // For key-up events, always remove the corresponding key-down event
+                if !newKeyEvent.isDown {
+                    // Remove any existing events with the same key code that are down
+                    self.currentEvents.removeAll { existingEvent in
+                        if let existingKey = existingEvent.keyboardEvent {
+                            return existingKey.keyCode == newKeyEvent.keyCode && existingKey.isDown
+                        }
+                        return false
+                    }
+                    
+                    // We don't need to show key-up events, just removing the key-down is enough
+                    return
+                }
+                
+                // For key-down events, check if we already have this key
+                let keyAlreadyExists = self.currentEvents.contains { existingEvent in
                     if let existingKey = existingEvent.keyboardEvent {
-                        return existingKey.keyCode == newKeyEvent.keyCode && 
-                               existingKey.isDown == newKeyEvent.isDown
+                        // Consider it a duplicate if:
+                        // 1. Same key code and state (down)
+                        // 2. Same modifiers (unless it's a modifier key itself)
+                        let sameCode = existingKey.keyCode == newKeyEvent.keyCode && existingKey.isDown
+                        
+                        // If it's a modifier key, we check more carefully
+                        if newKeyEvent.isModifierKey {
+                            return sameCode
+                        } else {
+                            return sameCode && Set(existingKey.modifiers) == Set(newKeyEvent.modifiers)
+                        }
                     }
                     return false
-                }) {
-                    // Remove the existing duplicate
-                    self.currentEvents.remove(at: existingIndex)
                 }
                 
-                // Add the new event at the end to maintain chronological order
+                // Skip this event if we already have this key in the same state
+                if keyAlreadyExists {
+                    Logger.debug("Skipping duplicate key event for key=\(newKeyEvent.key)", log: Logger.keyboard)
+                    return
+                }
+                
+                // Add the new event
                 self.currentEvents.append(event)
                 
-                // Limit events to 5 (further reduced to prevent clutter)
-                if self.currentEvents.count > 5 {
-                    self.currentEvents.removeFirst(self.currentEvents.count - 5)
+                // Limit events to 4 (further reduced to prevent clutter)
+                if self.currentEvents.count > 4 {
+                    self.currentEvents.removeFirst(self.currentEvents.count - 4)
                 }
+                
+                Logger.debug("Current key events: \(self.currentEvents.count)", log: Logger.keyboard)
             }
             .store(in: &cancellables)
     }
@@ -171,35 +198,25 @@ class KeyboardMonitor: ObservableObject {
         let isDown = type == .keyDown
         let currentTime = Date()
         
-        // Enhanced duplicate detection - much stricter
-        // Only process key-up or initial key-down (not repeats) for non-modifier keys
-        if isRepeat && !isModifierKey(keyCode) {
-            // Skip auto-repeat events completely
+        // Skip auto-repeat events completely - they cause duplicate display issues
+        if isRepeat {
             Logger.debug("Skipping auto-repeat event for key=\(characters)", log: Logger.keyboard)
             return
         }
         
-        // Check for duplicate events using recent events history - more aggressive threshold
+        // Check for duplicate events - use very strict criteria
         let isDuplicate = isDuplicateEvent(keyCode: keyCode, modifiers: modifiers, isDown: isDown, currentTime: currentTime)
         
         if !isDuplicate {
-            // Add to recent events
+            // Add to recent events tracking
             addToRecentEvents(keyCode: keyCode, modifiers: modifiers, isDown: isDown, timestamp: currentTime)
             
-            // When typing fast, sometimes modifier keys get stuck in the modifier list
-            // so let's make sure those aren't included for regular key presses
-            if !isModifierKey(keyCode) {
-                // Filter out any modifiers that aren't actually being pressed
-                modifiers = modifiers.filter { mod in 
-                    // Check if the modifier key is actually down
-                    flags.contains(flagForModifier(mod))
-                }
-            }
-            
+            // Create the input event
             let inputEvent = InputEvent.keyboardEvent(key: characters, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
             
             Logger.debug("Keyboard event: \(isDown ? "down" : "up") key=\(characters) keyCode=\(keyCode) modifiers=\(modifiers)", log: Logger.keyboard)
             
+            // Send the new event
             eventSubject.send(inputEvent)
             
             // Update last processed values
@@ -212,20 +229,20 @@ class KeyboardMonitor: ObservableObject {
         }
     }
     
-    // Helper method to check if an event is a duplicate - make it more aggressive
+    // Make duplicate detection much stricter
     private func isDuplicateEvent(keyCode: Int, modifiers: [KeyModifier], isDown: Bool, currentTime: Date) -> Bool {
-        // Always consider as duplicate if the exact same key was processed very recently (tighter threshold)
+        // Super strict threshold for exact same key - 200ms
         if keyCode == lastProcessedKeyCode && 
            isDown == lastProcessedIsDown &&
-           currentTime.timeIntervalSince(lastProcessedTime) < 0.05 {
+           currentTime.timeIntervalSince(lastProcessedTime) < 0.2 {
             return true
         }
         
-        // Check if this exact same event has occurred recently with even stricter timing
-        for event in recentlyProcessedEvents {
+        // Also check against recent events with an even stricter timing
+        for event in recentlyProcessedEvents.suffix(3) { // Only look at 3 most recent
             if event.keyCode == keyCode && 
                event.isDown == isDown &&
-               currentTime.timeIntervalSince(event.timestamp) < 0.1 {
+               currentTime.timeIntervalSince(event.timestamp) < 0.3 {
                 return true
             }
         }

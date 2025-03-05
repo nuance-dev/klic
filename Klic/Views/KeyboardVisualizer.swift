@@ -171,22 +171,19 @@ struct KeyboardVisualizer: View {
     private func getShortcutText() -> String {
         var text = ""
         
-        // Track which modifiers we've added
-        var processedModifiers: Set<KeyModifier> = []
-        
-        // Find all down modifier keys at the moment
+        // First collect all currently active modifiers
         var activeModifiers: Set<KeyModifier> = []
         
-        // First pass: collect all active modifiers from events
+        // Find active modifier keys that are currently DOWN
         for event in filteredEvents {
-            if let keyEvent = event.keyboardEvent {
-                // Add modifiers from the modifier list
+            if let keyEvent = event.keyboardEvent, keyEvent.isDown {
+                // Add explicit modifiers
                 if !keyEvent.modifiers.isEmpty {
                     activeModifiers.formUnion(keyEvent.modifiers)
                 }
                 
-                // Also add modifier from the key itself if it's a modifier key
-                if keyEvent.isModifierKey && keyEvent.isDown {
+                // Add the key itself if it's a modifier key
+                if keyEvent.isModifierKey {
                     if let mod = KeyModifier.allCases.first(where: { $0.keyCode == keyEvent.keyCode }) {
                         activeModifiers.insert(mod)
                     }
@@ -194,12 +191,10 @@ struct KeyboardVisualizer: View {
             }
         }
         
-        // Process modifiers in standard order: Control, Option, Shift, Command
+        // Process modifiers in standard order
         let orderedModifiers: [KeyModifier] = [.control, .option, .shift, .command]
         for modifier in orderedModifiers {
-            if activeModifiers.contains(modifier) && !processedModifiers.contains(modifier) {
-                processedModifiers.insert(modifier)
-                
+            if activeModifiers.contains(modifier) {
                 switch modifier {
                 case .command: text += "⌘"
                 case .shift: text += "⇧" 
@@ -211,38 +206,42 @@ struct KeyboardVisualizer: View {
             }
         }
         
-        // Second pass: find the most recent regular key
-        var latestRegularKey: (keyEvent: KeyboardEvent, timestamp: Date)? = nil
+        // Find the most recent non-modifier key that is DOWN
+        // Important: Use timestamp to ensure we get the latest key
+        var latestKeyEvent: (event: InputEvent, keyEvent: KeyboardEvent)? = nil
         
         for event in filteredEvents {
-            if let keyEvent = event.keyboardEvent, 
-               !keyEvent.isModifierKey && 
+            if let keyEvent = event.keyboardEvent,
+               !keyEvent.isModifierKey,
                keyEvent.isDown {
-                // If we haven't found a key yet, or this one is more recent
-                if latestRegularKey == nil || event.timestamp > latestRegularKey!.timestamp {
-                    latestRegularKey = (keyEvent, event.timestamp)
+                // Only update if we don't have one yet or this one is more recent
+                if latestKeyEvent == nil || event.timestamp > latestKeyEvent!.event.timestamp {
+                    latestKeyEvent = (event, keyEvent)
                 }
             }
         }
         
-        // Add the regular key to complete the shortcut
-        if let (keyEvent, _) = latestRegularKey, 
-           let character = keyEvent.characters,
-           !character.isEmpty {
-            
-            // For special keys, use the key representation
-            if character.count > 1 || character == " " || character == "\r" || character == "\t" {
-                switch character {
+        // If we found a non-modifier key, add it
+        if let (_, keyEvent) = latestKeyEvent {
+            // Special key representation
+            if let key = keyEvent.characters {
+                switch key {
                 case "\r": text += "↩" // return
                 case "\t": text += "⇥" // tab
                 case " ": text += "Space"
                 case "\u{1b}": text += "Esc"
                 case "\u{7f}": text += "⌫" // delete/backspace
-                default: text += character
+                default:
+                    // For single character keys, use uppercase
+                    if key.count == 1 {
+                        text += key.uppercased()
+                    } else {
+                        text += key
+                    }
                 }
             } else {
-                // For regular alphanumeric keys, use uppercase
-                text += character.uppercased()
+                // Fallback for keys with no character representation
+                text += keyEvent.key
             }
         }
         

@@ -160,11 +160,13 @@ final class AppDelegate: NSObject {
             // Add "Show Overlay Demo" item that shows example inputs
             let showDemoItem = NSMenuItem(title: "Show Overlay Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
             showDemoItem.keyEquivalentModifierMask = [.command, .option]
+            showDemoItem.target = self
             menu.addItem(showDemoItem)
             
             // Add "Show Overlay" item that just makes the overlay visible briefly
             let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
             showOverlayItem.keyEquivalentModifierMask = [.command]
+            showOverlayItem.target = self
             menu.addItem(showOverlayItem)
             
             menu.addItem(NSMenuItem.separator())
@@ -175,16 +177,19 @@ final class AppDelegate: NSObject {
             // Add toggle for keyboard
             let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "k")
             keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
+            keyboardItem.target = self
             inputTypesMenu.addItem(keyboardItem)
             
             // Add toggle for mouse
             let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "m")
             mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
+            mouseItem.target = self
             inputTypesMenu.addItem(mouseItem)
             
             // Add toggle for trackpad
             let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "t")
             trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
+            trackpadItem.target = self
             inputTypesMenu.addItem(trackpadItem)
             
             // Add the Input Types submenu
@@ -199,6 +204,7 @@ final class AppDelegate: NSObject {
             for position in OverlayPosition.allCases {
                 let positionItem = NSMenuItem(title: position.rawValue, action: #selector(setOverlayPosition(_:)), keyEquivalent: "")
                 positionItem.tag = position.rawValue.hashValue
+                positionItem.target = self
                 let currentPosition = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
                 positionItem.state = (position.rawValue == currentPosition) ? .on : .off
                 positionMenu.addItem(positionItem)
@@ -210,17 +216,23 @@ final class AppDelegate: NSObject {
             menu.addItem(positionMenuItem)
             
             // Add preferences item
-            menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+            let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ",")
+            preferencesItem.target = self
+            menu.addItem(preferencesItem)
             
             menu.addItem(NSMenuItem.separator())
             
             // Add "About Klic" item
-            menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
+            let aboutItem = NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: "")
+            aboutItem.target = self
+            menu.addItem(aboutItem)
             
             menu.addItem(NSMenuItem.separator())
             
             // Add quit item
-            menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            let quitItem = NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            quitItem.target = NSApp
+            menu.addItem(quitItem)
             
             // Assign the menu to the status item
             newStatusItem.menu = menu
