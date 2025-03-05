@@ -67,8 +67,8 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     private var momentumStartTime: Date?
     private var scrollTimeThreshold: TimeInterval = 0.1
     
-    // Add the movement threshold property
-    private let movementThreshold: CGFloat = 3.0
+    // Lower the movement threshold for better gesture detection
+    private let movementThreshold: CGFloat = 1.5
     
     // Storage for previous touches to compare movement
     private var previousTouches: [FingerTouch] = []
@@ -88,7 +88,7 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     // Right-click detection
     private var rightClickDetectionTimer: Timer?
     private var potentialRightClickTouches: [NSTouch] = []
-    private let rightClickThreshold: TimeInterval = 0.3
+    private let rightClickThreshold: TimeInterval = 0.25 // Lower threshold for faster right-click detection
     
     // MARK: - Initialization
     override init() {
@@ -496,17 +496,14 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             swipeDirection = deltaY > 0 ? .up : .down
         }
         
-        // Log the direction for debugging
-        Logger.debug("Swipe direction: \(swipeDirection)", log: Logger.trackpad)
+        // Calculate magnitude based on total movement
+        let totalMovement = hypot(deltaX, deltaY)
+        let magnitude = min(1.0, totalMovement * 1.5) // Increase multiplier for better visualization
         
-        // Calculate magnitude based on distance
-        let distance = hypot(deltaX, deltaY)
-        let magnitude = min(1.0, distance * 5)
-        
-        // Create swipe gesture with finger count
+        // Create gesture type with direction
         let gestureType = TrackpadGesture.GestureType.swipe(direction: swipeDirection)
         
-        // Create and publish swipe gesture
+        // Create and publish gesture event
         let gesture = TrackpadGesture(
             type: gestureType,
             touches: touches,
@@ -516,7 +513,9 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         )
         
         publishGestureEvent(gesture)
-        Logger.debug("Detected \(touches.count)-finger swipe \(swipeDirection), magnitude: \(magnitude)", log: Logger.trackpad)
+        
+        // Log the direction for debugging
+        Logger.debug("Swipe direction: \(swipeDirection), magnitude: \(magnitude)", log: Logger.trackpad)
     }
     
     private func cleanupStaleTouches() {
@@ -640,14 +639,38 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     
     override func scrollWheel(with event: NSEvent) {
         super.scrollWheel(with: event)
-        processScrollEvent(event: event)
+        processScrollWheelEvent(event: event)
     }
     
-    private func processScrollEvent(event: NSEvent) {
+    private func processScrollWheelEvent(event: NSEvent) {
+        // Detect momentum scrolling
+        if event.momentumPhase != [] {
+            // This is a momentum scroll event
+            inMomentumScrolling = true
+            momentumStartTime = Date()
+            
+            // Create momentum scroll event
+            processMomentumScrollEvent(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
+            return
+        }
+        
+        // Check if we need to end momentum scrolling
+        if inMomentumScrolling && (event.phase == .began || event.phase == .changed) {
+            inMomentumScrolling = false
+            momentumStartTime = nil
+        }
+        
+        // Process regular scroll events
+        processTrackpadScrollEvent(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            phase: event.phase,
+            event: event
+        )
+    }
+    
+    private func processTrackpadScrollEvent(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase, event: NSEvent) {
         // Get deltas and phase information
-        let deltaX = event.scrollingDeltaX
-        let deltaY = event.scrollingDeltaY
-        let phase = event.phase
         let momentumPhase = event.momentumPhase
         
         // Check if this is momentum scrolling
@@ -693,6 +716,62 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             // Publish gesture event
             publishGestureEvent(gesture)
         }
+    }
+    
+    // Specialized method to handle momentum scrolling
+    private func processMomentumScrollEvent(deltaX: CGFloat, deltaY: CGFloat) {
+        // Create touch points at scroll position
+        let centerX = trackpadBounds.width / 2.0
+        let centerY = trackpadBounds.height / 2.0
+        
+        // Create simulated touches for visualization
+        let touchCount = 2 // Simulate two finger scroll
+        var simulatedTouches: [FingerTouch] = []
+        
+        // Calculate direction
+        let isHorizontal = abs(deltaX) > abs(deltaY)
+        let spacing: CGFloat = 0.04
+        
+        for i in 0..<touchCount {
+            let offset = spacing * CGFloat(i - (touchCount - 1) / 2)
+            
+            let x = isHorizontal ? centerX : centerX + offset
+            let y = isHorizontal ? centerY + offset : centerY
+            
+            let touch = FingerTouch(
+                id: -1000 - i, // Use negative IDs to avoid conflicts
+                position: CGPoint(x: x, y: y),
+                pressure: 0.4,
+                majorRadius: 5.0,
+                minorRadius: 5.0,
+                fingerType: .index,
+                timestamp: Date()
+            )
+            simulatedTouches.append(touch)
+        }
+        
+        // Calculate magnitude based on total movement
+        let totalMovement = hypot(deltaX, deltaY)
+        let magnitude = min(1.0, totalMovement * 2.0) // Higher multiplier for momentum
+        
+        // Determine direction
+        var scrollDirection: TrackpadGesture.GestureType.SwipeDirection
+        if abs(deltaX) > abs(deltaY) {
+            scrollDirection = deltaX > 0 ? .right : .left
+        } else {
+            scrollDirection = deltaY > 0 ? .up : .down
+        }
+        
+        // Create and publish gesture
+        let gesture = TrackpadGesture(
+            type: .scroll(fingerCount: 2, deltaX: deltaX, deltaY: deltaY),
+            touches: simulatedTouches,
+            magnitude: magnitude,
+            rotation: nil,
+            isMomentumScroll: true
+        )
+        
+        publishGestureEvent(gesture)
     }
     
     // MARK: - Trackpad Setup

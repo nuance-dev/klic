@@ -10,7 +10,7 @@ final class AppDelegate: NSObject {
     }()
     
     // Use this flag to control whether to use status bar or not
-    private let useStatusBar = false
+    private let useStatusBar = true
     
     // Status bar item reference to keep it from being deallocated
     private var statusItem: NSStatusItem?
@@ -63,6 +63,9 @@ final class AppDelegate: NSObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            // Setup app to run in the background without dock icon
+            NSApp.setActivationPolicy(.accessory)
+            
             // Delay the setup of menu bar to ensure everything is initialized
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self?.setupMenuBar()
@@ -118,7 +121,10 @@ final class AppDelegate: NSObject {
                 self.statusItem = newStatusItem
                 
                 if let button = newStatusItem.button {
-                    button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Klic")
+                    // Create a more visually appealing template image
+                    let image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Klic")
+                    image?.isTemplate = true // Make it a template image so it adapts to the menu bar
+                    button.image = image
                     button.toolTip = "Klic Input Visualizer"
                 } else {
                     Logger.warning("Status item button is nil", log: Logger.app)
@@ -127,10 +133,69 @@ final class AppDelegate: NSObject {
                 // Create menu
                 let menu = NSMenu()
                 
-                // Add menu items
-                menu.addItem(NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o"))
-                menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+                // Add "Show Overlay Demo" item that shows example inputs
+                let showDemoItem = NSMenuItem(title: "Show Overlay Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
+                showDemoItem.keyEquivalentModifierMask = [.command, .option]
+                menu.addItem(showDemoItem)
+                
+                // Add "Show Overlay" item that just makes the overlay visible briefly
+                let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
+                showOverlayItem.keyEquivalentModifierMask = [.command]
+                menu.addItem(showOverlayItem)
+                
                 menu.addItem(NSMenuItem.separator())
+                
+                // Input Type Submenu
+                let inputTypesMenu = NSMenu()
+                
+                // Add toggle for keyboard
+                let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "k")
+                keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
+                inputTypesMenu.addItem(keyboardItem)
+                
+                // Add toggle for mouse
+                let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "m")
+                mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
+                inputTypesMenu.addItem(mouseItem)
+                
+                // Add toggle for trackpad
+                let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "t")
+                trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
+                inputTypesMenu.addItem(trackpadItem)
+                
+                // Add the Input Types submenu
+                let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
+                inputTypesMenuItem.submenu = inputTypesMenu
+                menu.addItem(inputTypesMenuItem)
+                
+                // Position Submenu
+                let positionMenu = NSMenu()
+                
+                // Add position options
+                for position in OverlayPosition.allCases {
+                    let positionItem = NSMenuItem(title: position.rawValue, action: #selector(setOverlayPosition(_:)), keyEquivalent: "")
+                    positionItem.tag = position.rawValue.hashValue
+                    let currentPosition = UserDefaults.standard.string(forKey: "overlayPosition") ?? OverlayPosition.bottomCenter.rawValue
+                    positionItem.state = (position.rawValue == currentPosition) ? .on : .off
+                    positionMenu.addItem(positionItem)
+                }
+                
+                // Add the Position submenu
+                let positionMenuItem = NSMenuItem(title: "Overlay Position", action: nil, keyEquivalent: "")
+                positionMenuItem.submenu = positionMenu
+                menu.addItem(positionMenuItem)
+                
+                // Add preferences item
+                menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+                
+                menu.addItem(NSMenuItem.separator())
+                
+                // Add "About Klic" item
+                menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
+                
+                menu.addItem(NSMenuItem.separator())
+                
+                // Add quit item
                 menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
                 
                 newStatusItem.menu = menu
@@ -146,8 +211,103 @@ final class AppDelegate: NSObject {
         showOverlayFromMenu()
     }
     
+    @objc func menuShowOverlayDemo() {
+        // Show a demo of various inputs to showcase the app
+        NotificationCenter.default.post(name: NSNotification.Name("ShowOverlayDemo"), object: nil)
+    }
+    
     @objc func menuShowPreferences() {
         NotificationCenter.default.post(name: NSNotification.Name("ShowPreferences"), object: nil)
+    }
+    
+    @objc func showAbout() {
+        // Create an about panel with app info
+        let aboutWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        aboutWindow.title = "About Klic"
+        
+        // Create about content
+        let hostingController = NSHostingController(rootView: AboutView())
+        aboutWindow.contentView = hostingController.view
+        aboutWindow.center()
+        aboutWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    @objc func toggleKeyboardInput() {
+        // Toggle keyboard input visibility
+        let current = UserDefaults.standard.bool(forKey: "showKeyboardInput")
+        UserDefaults.standard.set(!current, forKey: "showKeyboardInput")
+        
+        // Update the menu item state
+        if let menu = statusItem?.menu {
+            if let inputTypesItem = menu.items.first(where: { $0.title == "Input Types" }),
+               let submenu = inputTypesItem.submenu,
+               let keyboardItem = submenu.items.first(where: { $0.title == "Keyboard" }) {
+                keyboardItem.state = !current ? .on : .off
+            }
+        }
+        
+        // Notify of input type change
+        NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
+    }
+    
+    @objc func toggleMouseInput() {
+        // Toggle mouse input visibility
+        let current = UserDefaults.standard.bool(forKey: "showMouseInput")
+        UserDefaults.standard.set(!current, forKey: "showMouseInput")
+        
+        // Update the menu item state
+        if let menu = statusItem?.menu {
+            if let inputTypesItem = menu.items.first(where: { $0.title == "Input Types" }),
+               let submenu = inputTypesItem.submenu,
+               let mouseItem = submenu.items.first(where: { $0.title == "Mouse" }) {
+                mouseItem.state = !current ? .on : .off
+            }
+        }
+        
+        // Notify of input type change
+        NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
+    }
+    
+    @objc func toggleTrackpadInput() {
+        // Toggle trackpad input visibility
+        let current = UserDefaults.standard.bool(forKey: "showTrackpadInput")
+        UserDefaults.standard.set(!current, forKey: "showTrackpadInput")
+        
+        // Update the menu item state
+        if let menu = statusItem?.menu {
+            if let inputTypesItem = menu.items.first(where: { $0.title == "Input Types" }),
+               let submenu = inputTypesItem.submenu,
+               let trackpadItem = submenu.items.first(where: { $0.title == "Trackpad" }) {
+                trackpadItem.state = !current ? .on : .off
+            }
+        }
+        
+        // Notify of input type change
+        NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
+    }
+    
+    @objc func setOverlayPosition(_ sender: NSMenuItem) {
+        // Find the position based on the menu item tag
+        if let position = OverlayPosition.allCases.first(where: { $0.rawValue.hashValue == sender.tag }) {
+            // Save the position preference
+            UserDefaults.standard.set(position.rawValue, forKey: "overlayPosition")
+            
+            // Update all menu items in the position submenu
+            if let menu = sender.menu {
+                for item in menu.items {
+                    item.state = (item.tag == sender.tag) ? .on : .off
+                }
+            }
+            
+            // Update window position
+            NotificationCenter.default.post(name: NSNotification.Name("ReconfigureOverlayPosition"), object: nil)
+        }
     }
     
     func configureWindowAppearance() {
@@ -401,6 +561,10 @@ struct KlicApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowPreferences"))) { _ in
                     isShowingPreferences = true
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowOverlayDemo"))) { _ in
+                    // Show demo inputs when requested from menu
+                    inputManager.showDemoInputs()
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -438,58 +602,6 @@ struct KlicApp: App {
 }
 
 extension InputManager {
-    // Add events of specific type temporarily and show overlay
-    func temporarilyAddEvents(events: [InputEvent], ofType type: InputType) {
-        DispatchQueue.main.async {
-            // Add events based on type
-            switch type {
-            case .keyboard:
-                self.keyboardEvents = events
-                self.activeInputTypes.insert(.keyboard)
-            case .trackpad:
-                self.trackpadEvents = events
-                self.activeInputTypes.insert(.trackpad)
-            case .mouse:
-                self.mouseEvents = events
-                self.activeInputTypes.insert(.mouse)
-            }
-            
-            // Update all events
-            self.updateAllEvents()
-            
-            // Show the overlay with animation
-            withAnimation {
-                self.isOverlayVisible = true
-                
-                // Get the saved opacity preference or use default
-                let savedOpacity = UserDefaults.standard.double(forKey: "overlayOpacity")
-                self.overlayOpacity = savedOpacity > 0 ? savedOpacity : 0.9
-            }
-            
-            // Set up hide timer after a delay for menu-triggered displays
-            let hideDelay: TimeInterval = 2.0
-            DispatchQueue.main.asyncAfter(deadline: .now() + hideDelay) { [weak self] in
-                guard let self = self else { return }
-                
-                // Only hide this specific input type
-                switch type {
-                case .keyboard:
-                    self.keyboardEvents = []
-                case .trackpad:
-                    self.trackpadEvents = []
-                case .mouse:
-                    self.mouseEvents = []
-                }
-                
-                // Remove type from active types
-                self.activeInputTypes.remove(type)
-                self.updateAllEvents()
-                
-                // If no active types remain, hide overlay
-                if self.activeInputTypes.isEmpty {
-                    self.hideOverlay()
-                }
-            }
-        }
-    }
+    // This extension is intentionally left empty
+    // The temporarilyAddEvents method was moved to InputManager.swift
 }

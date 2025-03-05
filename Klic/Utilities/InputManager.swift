@@ -589,119 +589,53 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         }
     }
     
-    // Add method for demo inputs
+    // Show demo inputs for demonstration purposes
     func showDemoInputs() {
-        // Show the overlay
-        showOverlay()
-        
         // Clear any existing events
         clearAllEvents()
         
-        // Create keyboard input demo
-        self.createKeyboardDemo()
+        // Create demo keyboard events
+        let keyboardEvents: [InputEvent] = [
+            InputEvent.keyboardEvent(key: "⌘", keyCode: 55, isDown: true, modifiers: [.command], characters: "⌘"),
+            InputEvent.keyboardEvent(key: "⇧", keyCode: 56, isDown: true, modifiers: [.shift], characters: "⇧"),
+            InputEvent.keyboardEvent(key: "R", keyCode: 15, isDown: true, modifiers: [.command, .shift], characters: "R")
+        ]
         
-        // Create mouse demo after a short delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.createMouseDemo()
-        }
+        // Create demo mouse events
+        let mouseEvents: [InputEvent] = [
+            InputEvent.mouseEvent(type: .mouseDown, position: CGPoint(x: 0.5, y: 0.5), button: .left, isDown: true)
+        ]
         
-        // Create trackpad demo after another delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            self.createTrackpadDemo()
-        }
-    }
-    
-    private func createKeyboardDemo() {
-        // Create some keyboard shortcut demos
-        let commandKey = InputEvent.keyboardEvent(
-            key: "⌘",
-            keyCode: 55, // Command key
-            isDown: true,
-            modifiers: [.command],
-            characters: "⌘"
-        )
-        
-        let shiftKey = InputEvent.keyboardEvent(
-            key: "⇧",
-            keyCode: 56, // Shift key
-            isDown: true,
-            modifiers: [.shift],
-            characters: "⇧"
-        )
-        
-        let pKey = InputEvent.keyboardEvent(
-            key: "p",
-            keyCode: 35, // P key
-            isDown: true,
-            modifiers: [.command, .shift],
-            characters: "p"
-        )
-        
-        DispatchQueue.main.async {
-            self.keyboardEvents = [pKey, shiftKey, commandKey]
-            self.updateActiveInputTypes(adding: .keyboard)
-            self.updateAllEvents()
-        }
-    }
-    
-    private func createMouseDemo() {
-        // Create mouse click and move demos
-        let mouseClick = InputEvent.mouseEvent(
-            type: .mouseDown,
-            position: NSPoint(x: 800, y: 600),
-            button: .left,
-            isDown: true
-        )
-        
-        let mouseMove = InputEvent.mouseEvent(
-            type: .mouseMove,
-            position: NSPoint(x: 800, y: 600),
-            isDown: false
-        )
-        
-        DispatchQueue.main.async {
-            self.mouseEvents = [mouseClick, mouseMove]
-            self.updateActiveInputTypes(adding: .mouse)
-            self.updateAllEvents()
-        }
-    }
-    
-    private func createTrackpadDemo() {
-        // Create trackpad gestures demo
-        let centerTouch = FingerTouch(
-            id: 1,
-            position: CGPoint(x: 0.5, y: 0.5),
-            pressure: 1.0,
-            majorRadius: 10.0,
-            minorRadius: 10.0,
-            fingerType: .index,
-            timestamp: Date()
-        )
-        
-        let secondTouch = FingerTouch(
-            id: 2,
-            position: CGPoint(x: 0.6, y: 0.5),
-            pressure: 1.0,
-            majorRadius: 10.0,
-            minorRadius: 10.0,
-            fingerType: .middle,
-            timestamp: Date()
-        )
+        // Create demo trackpad events
+        let touch1 = FingerTouch(id: 1, position: CGPoint(x: 0.3, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
+        let touch2 = FingerTouch(id: 2, position: CGPoint(x: 0.7, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: Date())
         
         let gesture = TrackpadGesture(
             type: .pinch,
-            touches: [centerTouch, secondTouch],
-            magnitude: 0.7,
+            touches: [touch1, touch2],
+            magnitude: 0.8,
             rotation: nil,
             isMomentumScroll: false
         )
         
-        let gestureEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+        let trackpadEvents: [InputEvent] = [
+            InputEvent.trackpadGestureEvent(gesture: gesture)
+        ]
         
+        // Show each type of input with a delay between them
         DispatchQueue.main.async {
-            self.trackpadEvents = [gestureEvent]
-            self.updateActiveInputTypes(adding: .trackpad)
-            self.updateAllEvents()
+            // First show keyboard
+            self.temporarilyAddEvents(events: keyboardEvents, ofType: .keyboard)
+            
+            // Then show mouse after a delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.temporarilyAddEvents(events: mouseEvents, ofType: .mouse)
+                
+                // Finally show trackpad after another delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    self.temporarilyAddEvents(events: trackpadEvents, ofType: .trackpad)
+                }
+            }
         }
     }
     
@@ -751,5 +685,60 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
     
     func trackpadTouchesEnded(touches: [FingerTouch]) {
         // No need to add ended touches to the event list
+    }
+    
+    // Add events of specific type temporarily and show overlay
+    func temporarilyAddEvents(events: [InputEvent], ofType type: InputType) {
+        DispatchQueue.main.async {
+            // Add events based on type
+            switch type {
+            case .keyboard:
+                self.keyboardEvents = events
+                self.activeInputTypes.insert(.keyboard)
+            case .trackpad:
+                self.trackpadEvents = events
+                self.activeInputTypes.insert(.trackpad)
+            case .mouse:
+                self.mouseEvents = events
+                self.activeInputTypes.insert(.mouse)
+            }
+            
+            // Update all events
+            self.updateAllEvents()
+            
+            // Show the overlay with animation
+            withAnimation {
+                self.isOverlayVisible = true
+                
+                // Get the saved opacity preference or use default
+                let savedOpacity = UserDefaults.standard.double(forKey: "overlayOpacity")
+                self.overlayOpacity = savedOpacity > 0 ? savedOpacity : 0.9
+            }
+            
+            // Set up hide timer after a delay for menu-triggered displays
+            let hideDelay: TimeInterval = 2.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + hideDelay) { [weak self] in
+                guard let self = self else { return }
+                
+                // Only hide this specific input type
+                switch type {
+                case .keyboard:
+                    self.keyboardEvents = []
+                case .trackpad:
+                    self.trackpadEvents = []
+                case .mouse:
+                    self.mouseEvents = []
+                }
+                
+                // Remove type from active types
+                self.activeInputTypes.remove(type)
+                self.updateAllEvents()
+                
+                // If no active types remain, hide overlay
+                if self.activeInputTypes.isEmpty {
+                    self.hideOverlay()
+                }
+            }
+        }
     }
 } 

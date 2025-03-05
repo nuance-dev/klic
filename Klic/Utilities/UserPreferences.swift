@@ -8,9 +8,14 @@ struct UserPreferences {
     static let overlayPositionKey = "overlayPosition"
     static let overlayOpacityKey = "overlayOpacity"
     static let minimalDisplayModeKey = "minimalDisplayMode"
+    static let showKeyboardInputKey = "showKeyboardInput"
+    static let showMouseInputKey = "showMouseInput"
+    static let showTrackpadInputKey = "showTrackpadInput"
+    static let autoHideDelayKey = "autoHideDelay"
     
     // Default values
     static let defaultOverlayOpacity: Double = 0.85
+    static let defaultAutoHideDelay: Double = 1.5
     
     // MARK: - Overlay Position
     
@@ -38,6 +43,57 @@ struct UserPreferences {
         UserDefaults.standard.set(value, forKey: overlayOpacityKey)
     }
     
+    // MARK: - Input Type Settings
+    
+    // Get keyboard input visibility
+    static func getShowKeyboardInput() -> Bool {
+        let exists = UserDefaults.standard.object(forKey: showKeyboardInputKey) != nil
+        return exists ? UserDefaults.standard.bool(forKey: showKeyboardInputKey) : true
+    }
+    
+    // Set keyboard input visibility
+    static func setShowKeyboardInput(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: showKeyboardInputKey)
+        NotificationCenter.default.post(name: .InputTypesChanged, object: nil)
+    }
+    
+    // Get mouse input visibility
+    static func getShowMouseInput() -> Bool {
+        let exists = UserDefaults.standard.object(forKey: showMouseInputKey) != nil
+        return exists ? UserDefaults.standard.bool(forKey: showMouseInputKey) : true
+    }
+    
+    // Set mouse input visibility
+    static func setShowMouseInput(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: showMouseInputKey)
+        NotificationCenter.default.post(name: .InputTypesChanged, object: nil)
+    }
+    
+    // Get trackpad input visibility
+    static func getShowTrackpadInput() -> Bool {
+        let exists = UserDefaults.standard.object(forKey: showTrackpadInputKey) != nil
+        return exists ? UserDefaults.standard.bool(forKey: showTrackpadInputKey) : true
+    }
+    
+    // Set trackpad input visibility
+    static func setShowTrackpadInput(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: showTrackpadInputKey)
+        NotificationCenter.default.post(name: .InputTypesChanged, object: nil)
+    }
+    
+    // MARK: - Auto-Hide Delay
+    
+    // Get auto-hide delay
+    static func getAutoHideDelay() -> Double {
+        let value = UserDefaults.standard.double(forKey: autoHideDelayKey)
+        return value > 0 ? value : defaultAutoHideDelay
+    }
+    
+    // Set auto-hide delay
+    static func setAutoHideDelay(_ value: Double) {
+        UserDefaults.standard.set(value, forKey: autoHideDelayKey)
+    }
+    
     // MARK: - Minimal Display Mode
     
     // Get minimal display mode preference
@@ -57,7 +113,11 @@ struct UserPreferences {
         UserDefaults.standard.register(defaults: [
             overlayPositionKey: "bottomCenter",
             overlayOpacityKey: defaultOverlayOpacity,
-            minimalDisplayModeKey: false
+            minimalDisplayModeKey: false,
+            showKeyboardInputKey: true,
+            showMouseInputKey: true,
+            showTrackpadInputKey: true,
+            autoHideDelayKey: defaultAutoHideDelay
         ])
     }
 } 
