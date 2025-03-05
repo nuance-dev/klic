@@ -278,6 +278,13 @@ class MouseMonitor: ObservableObject {
             }
             
         case .mouseMoved:
+            // Completely disable mouse movement events
+            // We'll only track the position for other event types
+            lastMousePosition = location
+            lastMouseTime = timestamp
+            
+            // Comment out the previous movement tracking code
+            /*
             // Check if we've moved enough to register a new event
             let distance = hypot(location.x - lastMousePosition.x, location.y - lastMousePosition.y)
             let timeDiff = timestamp.timeIntervalSince(lastMouseTime)
@@ -317,6 +324,7 @@ class MouseMonitor: ObservableObject {
                 lastMovementEventTime = timestamp
                 Logger.debug("Mouse moved to \(location) with speed \(speed)", log: Logger.mouse)
             }
+            */
             
         case .scrollWheel:
             let deltaY = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
@@ -326,20 +334,20 @@ class MouseMonitor: ObservableObject {
             let phase = event.getIntegerValueField(.scrollWheelEventMomentumPhase)
             let isMomentum = phase != 0
             
-            if abs(deltaY) > 0.1 || abs(deltaX) > 0.1 {
+            // Ignore momentum scrolling - only show actual user scroll actions
+            if (abs(deltaY) > 0.1 || abs(deltaX) > 0.1) && !isMomentum {
                 let inputEvent = InputEvent.mouseEvent(
                     type: .mouseScroll,
                     position: location,
                     scrollDelta: CGPoint(x: deltaX, y: deltaY),
-                    isDown: false,
-                    isMomentumScroll: isMomentum
+                    isMomentumScroll: false // Never show momentum scrolling
                 )
+                
                 DispatchQueue.main.async {
-                    // Replace any existing scroll events to avoid clutter
-                    self.currentEvents.removeAll { $0.type == .mouse && $0.mouseEvent?.scrollDelta != nil }
                     self.currentEvents.append(inputEvent)
                 }
-                Logger.debug("Mouse scrolled (deltaY: \(deltaY), deltaX: \(deltaX), momentum: \(isMomentum))", log: Logger.mouse)
+                
+                Logger.debug("Mouse scrolled with delta (\(deltaX), \(deltaY)), momentum: \(isMomentum)", log: Logger.mouse)
             }
             
         default:

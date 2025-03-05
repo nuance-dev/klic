@@ -181,209 +181,38 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
     }
     
     private func filterRepeatKeyEvents(_ events: [InputEvent]) -> [InputEvent] {
-        // Enhanced filtering for fast typing sequences
-        var filteredEvents: [InputEvent] = []
-        var lastCharacters: [String] = []
-        var lastTimestamp = Date.distantPast
-        var lastKeyCode: Int? = nil
+        // Track time between keypresses
+        let now = Date()
+        let timeSinceLastKeyPress = now.timeIntervalSince(lastKeyPressTime)
+        lastKeyPressTime = now
         
-        // Track the last 12 typed characters to detect typing patterns (increased from 8)
-        let maxTrackedChars = 12
-        
-        // Create a map of timestamps by character for better sequence detection
-        var characterTimestamps: [String: [Date]] = [:]
-        
-        // Calculate typing speed dynamically
-        let typingRate = calculateTypingRate(events)
-        let adjustedKeyPressFrequency = typingRate > 0 ? min(0.3, max(0.05, 1.0 / typingRate)) : keyPressFrequency
-        
-        for event in events {
-            if let keyEvent = event.keyboardEvent, let char = keyEvent.characters {
-                // Calculate time since last keypress
-                let timeDelta = event.timestamp.timeIntervalSince(lastTimestamp)
-                
-                // Update typing speed metrics
-                if timeDelta < 0.3 {
-                    consecutiveKeyPresses += 1
-                    // Adjust key press frequency based on typing speed
-                    if consecutiveKeyPresses > keyPressThreshold {
-                        keyPressFrequency = min(0.3, max(0.08, timeDelta * 2))
-                    }
-                } else {
-                    consecutiveKeyPresses = 0
-                }
-                
-                // Check if this is a repeat of the last character
-                let isKeyRepeat = keyEvent.isRepeat || (char == lastCharacters.first && keyEvent.keyCode == lastKeyCode)
-                
-                // Check if we're typing fast and need to filter events
-                let isFastTyping = timeDelta < adjustedKeyPressFrequency && filteredEvents.count >= maxKeyboardEvents - 1
-                
-                // Special case: Don't filter out modifier keys or special keys regardless of typing speed
-                let isModifierKey = !keyEvent.modifiers.isEmpty || 
-                                    char == "⌘" || char == "⇧" || char == "⌥" || char == "⌃" ||
-                                    keyEvent.keyCode == 55 || keyEvent.keyCode == 56 || 
-                                    keyEvent.keyCode == 58 || keyEvent.keyCode == 59 ||
-                                    keyEvent.keyCode == 60 || keyEvent.keyCode == 61 ||
-                                    keyEvent.keyCode == 62 || keyEvent.keyCode == 63
-                
-                // Also don't filter function keys, arrow keys, and other special keys
-                let isSpecialKey = (keyEvent.keyCode >= 96 && keyEvent.keyCode <= 111) || // Function keys
-                                   (keyEvent.keyCode >= 123 && keyEvent.keyCode <= 126) || // Arrow keys
-                                   keyEvent.keyCode == 51 || keyEvent.keyCode == 53 || // Delete, Escape
-                                   keyEvent.keyCode == 36 || keyEvent.keyCode == 76 || // Return/Enter
-                                   keyEvent.keyCode == 48 || keyEvent.keyCode == 49    // Tab, Space
-                
-                // Track character timestamps for sequence analysis
-                if !isModifierKey && !isSpecialKey {
-                    if characterTimestamps[char] == nil {
-                        characterTimestamps[char] = [event.timestamp]
-                    } else {
-                        characterTimestamps[char]?.append(event.timestamp)
-                    }
-                }
-                
-                // Special handling for key-up events - always include them
-                let isKeyUp = !keyEvent.isDown
-                
-                // Decide whether to keep this event
-                if isKeyUp {
-                    // Always show key-up events for currently displayed keys
-                    let keyDownExists = filteredEvents.contains { existingEvent in
-                        if let existingKeyEvent = existingEvent.keyboardEvent {
-                            return existingKeyEvent.isDown && existingKeyEvent.keyCode == keyEvent.keyCode
-                        }
-                        return false
-                    }
-                    
-                    if keyDownExists {
-                        filteredEvents.append(event)
-                    }
-                } else if isKeyRepeat {
-                    // For repeat keys, only keep one repeat max
-                    if !lastCharacters.contains(where: { $0 == char && $0 != lastCharacters.first }) {
-                        filteredEvents.append(event)
-                        lastCharacters.insert(char, at: 0)
-                        if lastCharacters.count > maxTrackedChars {
-                            lastCharacters.removeLast()
-                        }
-                    }
-                } else if (isFastTyping && !isModifierKey && !isSpecialKey) {
-                    // If typing very fast and this is a regular key, we need to be selective
-                    
-                    // Check if this character makes a common sequence with previous characters
-                    let isDuplicate = isDuplicateInTypingSequence(char, keyCode: keyEvent.keyCode, previousChars: lastCharacters, timestamps: characterTimestamps)
-                    
-                    if !isDuplicate {
-                        // This is a new character in the sequence, keep it
-                        filteredEvents.append(event)
-                        lastCharacters.insert(char, at: 0)
-                        if lastCharacters.count > maxTrackedChars {
-                            lastCharacters.removeLast()
-                        }
-                    } else {
-                        Logger.debug("Filtered out duplicate character '\(char)' in fast typing sequence", log: Logger.app)
-                    }
-                    // Otherwise skip it as it's likely a repeated keystroke from fast typing
-                } else {
-                    // Normal case - add the event
-                    filteredEvents.append(event)
-                    lastCharacters.insert(char, at: 0)
-                    if lastCharacters.count > maxTrackedChars {
-                        lastCharacters.removeLast()
-                    }
-                }
-                
-                // Update timestamp and keycode
-                lastTimestamp = event.timestamp
-                lastKeyCode = keyEvent.keyCode
-            } else {
-                // Non-character event (like key up), always add it
-                filteredEvents.append(event)
-            }
-        }
-        
-        // Limit to maximum number of events
-        if filteredEvents.count > maxKeyboardEvents {
-            filteredEvents = Array(filteredEvents.prefix(maxKeyboardEvents))
-        }
-        
-        // Ensure the events are in the correct order (newest first)
-        return filteredEvents.sorted { $0.timestamp > $1.timestamp }
-    }
-    
-    // Helper function to calculate typing rate in characters per second
-    private func calculateTypingRate(_ events: [InputEvent]) -> Double {
-        guard events.count > 1 else { return 0.0 }
-        
-        // Filter to only key down events to calculate typing rate
-        let keyDownEvents = events.filter { 
-            if let keyEvent = $0.keyboardEvent {
-                return keyEvent.isDown
-            }
-            return false
-        }
-        
-        guard keyDownEvents.count > 1 else { return 0.0 }
-        
-        // Get the oldest and newest timestamps
-        let sortedEvents = keyDownEvents.sorted { $0.timestamp < $1.timestamp }
-        let oldestTime = sortedEvents.first!.timestamp
-        let newestTime = sortedEvents.last!.timestamp
-        
-        // Calculate time span and character count
-        let timeSpan = newestTime.timeIntervalSince(oldestTime)
-        if timeSpan > 0.1 {
-            // Characters per second
-            return Double(sortedEvents.count) / timeSpan
-        }
-        
-        return 0.0
-    }
-    
-    // Enhanced helper function to detect duplicate characters in typing sequences
-    private func isDuplicateInTypingSequence(_ char: String, keyCode: Int, previousChars: [String], timestamps: [String: [Date]]) -> Bool {
-        // If we have fewer than 2 previous characters, it's not a duplicate
-        if previousChars.count < 2 {
-            return false
-        }
-        
-        // Check for common patterns like repeated characters that aren't intentional repeats
-        // Example: When typing "better" fast, we might get "bebett" because of key repeat issues
-        
-        // Check if this character appears in position 0 and 2+ (skipping the most recent character)
-        for i in 2..<min(previousChars.count, 5) {
-            if i < previousChars.count && char == previousChars[i] {
-                // This could be a duplicate from fast typing
-                // For example, in "bebett", the second 'b' might be a false repeat
-                
-                // Check if this creates a pattern like "beb" -> "bet"
-                if i >= 2 && previousChars[i-1] != previousChars[0] {
-                    return true
-                }
-            }
-        }
-        
-        // Check for alternating patterns like "bebebe" which should be "bebe"
-        if previousChars.count >= 4 {
-            if char == previousChars[1] && previousChars[0] == previousChars[2] {
-                return true
-            }
-        }
-        
-        // Check for timing-based duplicates
-        if let charTimestamps = timestamps[char], charTimestamps.count >= 2 {
-            let latestTimestamp = charTimestamps.last!
-            let previousTimestamp = charTimestamps[charTimestamps.count - 2]
+        // Adjust frequency based on timing between keypresses
+        if timeSinceLastKeyPress < 0.1 {
+            // Fast typing detected
+            consecutiveKeyPresses += 1
             
-            // If the same character appears twice in a very short time (< 50ms), 
-            // it's likely a duplicate from fast typing
-            if latestTimestamp.timeIntervalSince(previousTimestamp) < 0.05 {
-                return true
+            // Update typing frequency
+            if consecutiveKeyPresses >= keyPressThreshold {
+                keyPressFrequency = min(keyPressFrequency, timeSinceLastKeyPress * 1.5)
             }
+        } else {
+            // Reset counter when typing pauses
+            consecutiveKeyPresses = 0
         }
         
-        return false
+        // Implement smart filtering
+        if consecutiveKeyPresses >= keyPressThreshold {
+            // When typing quickly, only show every other keypress
+            var filtered = [InputEvent]()
+            for (index, event) in events.enumerated() {
+                if index % 2 == 0 || event.type != .keyboard || event.keyboardEvent?.isDown == false {
+                    filtered.append(event)
+                }
+            }
+            return filtered
+        }
+        
+        return events
     }
     
     private func updateActiveInputTypes(adding type: InputType? = nil, removing isEmpty: Bool = false) {
@@ -406,13 +235,13 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
     
     // This public method will be used by both the internal class and the extensions
     public func updateAllEvents() {
-        // Combine all events and sort by timestamp (newest first)
+        // Combine all events and sort by timestamp (oldest first for better readability)
         allEvents = (keyboardEvents + mouseEvents + trackpadEvents)
-            .sorted { $0.timestamp > $1.timestamp }
+            .sorted { $0.timestamp < $1.timestamp }
         
         // Keep only the most recent events
         if allEvents.count > 15 {
-            allEvents = Array(allEvents.prefix(15))
+            allEvents = Array(allEvents.suffix(15))
         }
         
         Logger.debug("Updated all events, count: \(allEvents.count)", log: Logger.app)
@@ -594,21 +423,82 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         // Clear any existing events
         clearAllEvents()
         
-        // Create demo keyboard events
+        // Get current timestamp
+        let now = Date()
+        
+        // Create demo keyboard events with sequential timestamps
         let keyboardEvents: [InputEvent] = [
-            InputEvent.keyboardEvent(key: "⌘", keyCode: 55, isDown: true, modifiers: [.command], characters: "⌘"),
-            InputEvent.keyboardEvent(key: "⇧", keyCode: 56, isDown: true, modifiers: [.shift], characters: "⇧"),
-            InputEvent.keyboardEvent(key: "R", keyCode: 15, isDown: true, modifiers: [.command, .shift], characters: "R")
+            InputEvent(
+                id: UUID(),
+                timestamp: now.addingTimeInterval(-0.3),
+                type: .keyboard,
+                keyboardEvent: KeyboardEvent(
+                    key: "⌘", 
+                    keyCode: 55, 
+                    isDown: true, 
+                    modifiers: [.command], 
+                    characters: "⌘",
+                    isRepeat: false
+                ),
+                mouseEvent: nil,
+                trackpadGesture: nil,
+                trackpadTouches: nil
+            ),
+            InputEvent(
+                id: UUID(),
+                timestamp: now.addingTimeInterval(-0.2),
+                type: .keyboard,
+                keyboardEvent: KeyboardEvent(
+                    key: "⇧", 
+                    keyCode: 56, 
+                    isDown: true, 
+                    modifiers: [.shift], 
+                    characters: "⇧",
+                    isRepeat: false
+                ),
+                mouseEvent: nil,
+                trackpadGesture: nil,
+                trackpadTouches: nil
+            ),
+            InputEvent(
+                id: UUID(),
+                timestamp: now.addingTimeInterval(-0.1),
+                type: .keyboard,
+                keyboardEvent: KeyboardEvent(
+                    key: "R", 
+                    keyCode: 15, 
+                    isDown: true, 
+                    modifiers: [.command, .shift], 
+                    characters: "R",
+                    isRepeat: false
+                ),
+                mouseEvent: nil,
+                trackpadGesture: nil,
+                trackpadTouches: nil
+            )
         ]
         
         // Create demo mouse events
         let mouseEvents: [InputEvent] = [
-            InputEvent.mouseEvent(type: .mouseDown, position: CGPoint(x: 0.5, y: 0.5), button: .left, isDown: true)
+            InputEvent(
+                id: UUID(),
+                timestamp: now,
+                type: .mouse,
+                keyboardEvent: nil,
+                mouseEvent: MouseEvent(
+                    position: CGPoint(x: 0.5, y: 0.5), 
+                    button: .left, 
+                    scrollDelta: nil,
+                    isDown: true
+                ),
+                trackpadGesture: nil,
+                trackpadTouches: nil
+            )
         ]
         
         // Create demo trackpad events
-        let touch1 = FingerTouch(id: 1, position: CGPoint(x: 0.3, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: Date())
-        let touch2 = FingerTouch(id: 2, position: CGPoint(x: 0.7, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: Date())
+        let touch1 = FingerTouch(id: 1, position: CGPoint(x: 0.3, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .index, timestamp: now)
+        let touch2 = FingerTouch(id: 2, position: CGPoint(x: 0.7, y: 0.5), pressure: 0.8, majorRadius: 10, minorRadius: 10, fingerType: .middle, timestamp: now)
         
         let gesture = TrackpadGesture(
             type: .pinch,
@@ -619,7 +509,15 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
         )
         
         let trackpadEvents: [InputEvent] = [
-            InputEvent.trackpadGestureEvent(gesture: gesture)
+            InputEvent(
+                id: UUID(),
+                timestamp: now.addingTimeInterval(0.1),
+                type: .trackpadGesture,
+                keyboardEvent: nil,
+                mouseEvent: nil,
+                trackpadGesture: gesture,
+                trackpadTouches: nil
+            )
         ]
         
         // Show each type of input with a delay between them
@@ -690,16 +588,18 @@ class InputManager: ObservableObject, TrackpadMonitorDelegate {
     // Add events of specific type temporarily and show overlay
     func temporarilyAddEvents(events: [InputEvent], ofType type: InputType) {
         DispatchQueue.main.async {
-            // Add events based on type
+            // Add events based on type - ensure they're properly sorted (oldest first)
+            let sortedEvents = events.sorted { $0.timestamp < $1.timestamp }
+            
             switch type {
             case .keyboard:
-                self.keyboardEvents = events
+                self.keyboardEvents = sortedEvents
                 self.activeInputTypes.insert(.keyboard)
             case .trackpad:
-                self.trackpadEvents = events
+                self.trackpadEvents = sortedEvents
                 self.activeInputTypes.insert(.trackpad)
             case .mouse:
-                self.mouseEvents = events
+                self.mouseEvents = sortedEvents
                 self.activeInputTypes.insert(.mouse)
             }
             

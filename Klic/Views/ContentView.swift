@@ -4,7 +4,6 @@ import Combine
 struct ContentView: View {
     @ObservedObject var inputManager = InputManager.shared
     @State private var isMinimalMode: Bool = false
-    @State private var showSettings: Bool = false
     
     // MARK: - Body
     
@@ -35,32 +34,6 @@ struct ContentView: View {
                 }
             }
             .padding(.vertical, 16)
-            
-            // Settings button
-            VStack {
-                HStack {
-                    Spacer()
-                    
-                    Button(action: {
-                        showSettings.toggle()
-                    }) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
-                            .padding(8)
-                            .background(Color.black.opacity(0.4))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .padding(16)
-                }
-                
-                Spacer()
-            }
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(isMinimalMode: $isMinimalMode)
-                .frame(width: 400, height: 300)
         }
         .onAppear {
             // Start monitoring inputs
@@ -68,42 +41,6 @@ struct ContentView: View {
             
             // Load user preferences
             isMinimalMode = UserDefaults.standard.bool(forKey: "minimalMode")
-        }
-    }
-}
-
-// MARK: - Settings View
-
-struct SettingsView: View {
-    @Binding var isMinimalMode: Bool
-    @Environment(\.presentationMode) var presentationMode
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("Settings")
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .padding(.top, 20)
-            
-            Form {
-                Section(header: Text("Display Options")) {
-                    Toggle("Minimal Mode", isOn: $isMinimalMode)
-                        .onChange(of: isMinimalMode) { oldValue, newValue in
-                            UserDefaults.standard.set(newValue, forKey: "minimalMode")
-                        }
-                }
-                
-                Section(header: Text("Input Monitoring")) {
-                    Button("Restart Input Monitoring") {
-                        InputManager.shared.startAllMonitors()
-                    }
-                }
-            }
-            
-            Button("Close") {
-                presentationMode.wrappedValue.dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.bottom, 20)
         }
     }
 }

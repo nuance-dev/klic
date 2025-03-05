@@ -10,6 +10,13 @@ protocol TrackpadMonitorDelegate: AnyObject {
     func trackpadTouchesEnded(touches: [FingerTouch])
 }
 
+// Add default implementations to make these methods optional
+extension TrackpadMonitorDelegate {
+    func trackpadMonitorDidDetectGesture(_ gesture: TrackpadGesture) {}
+    func trackpadTouchesBegan(touches: [FingerTouch]) {}
+    func trackpadTouchesEnded(touches: [FingerTouch]) {}
+}
+
 class TrackpadMonitor: NSResponder, ObservableObject {
     // MARK: - Types
     
@@ -90,6 +97,9 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     private var potentialRightClickTouches: [NSTouch] = []
     private let rightClickThreshold: TimeInterval = 0.25 // Lower threshold for faster right-click detection
     
+    // Create property for storing previous positions
+    private var previousPositions: [CGPoint]?
+    
     // MARK: - Initialization
     override init() {
         super.init()
@@ -158,6 +168,9 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         
         if let touches = event.allTouches() {
             processTouchesMovedEvent(touches: touches)
+            
+            // Call our enhanced gesture detection
+            detectAndProcessGesture(touches: touches)
         }
     }
     
@@ -359,6 +372,12 @@ class TrackpadMonitor: NSResponder, ObservableObject {
             fingerType: .unknown,
             timestamp: Date()
         )
+    }
+    
+    // Add the missing convertTouchToFingerTouch function
+    private func convertTouchToFingerTouch(_ touch: NSTouch) -> FingerTouch {
+        // This is a simpler wrapper around createFingerTouchFromNSTouch for consistent naming
+        return createFingerTouchFromNSTouch(nsTouch: touch)
     }
     
     private func detectGesture(touches: [FingerTouch]) {
@@ -754,14 +773,6 @@ class TrackpadMonitor: NSResponder, ObservableObject {
         let totalMovement = hypot(deltaX, deltaY)
         let magnitude = min(1.0, totalMovement * 2.0) // Higher multiplier for momentum
         
-        // Determine direction
-        var scrollDirection: TrackpadGesture.GestureType.SwipeDirection
-        if abs(deltaX) > abs(deltaY) {
-            scrollDirection = deltaX > 0 ? .right : .left
-        } else {
-            scrollDirection = deltaY > 0 ? .up : .down
-        }
-        
         // Create and publish gesture
         let gesture = TrackpadGesture(
             type: .scroll(fingerCount: 2, deltaX: deltaX, deltaY: deltaY),
@@ -818,6 +829,343 @@ class TrackpadMonitor: NSResponder, ObservableObject {
     private func detectTrackpadBounds() {
         // Use default trackpad size for now
         trackpadBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+    }
+    
+    private func detectAndProcessGesture(touches: Set<NSTouch>) {
+        // Count active touches
+        let touchCount = touches.count
+        
+        // Enhanced multi-finger gesture detection
+        // We'll be more sensitive to multi-finger gestures, especially 3 and 4 finger gestures
+        if touchCount >= 2 {
+            // Enhanced gesture detection logic for swipes, pinches, rotations
+            if touchCount == 2 {
+                detectTwoFingerGesture(touches: touches)
+            } else if touchCount == 3 {
+                detect3FingerGesture(touches: touches)
+            } else if touchCount >= 4 {
+                // Improved 4+ finger gesture detection (specifically requested by user)
+                detect4PlusFingerGesture(touches: touches, fingerCount: touchCount)
+            }
+        } else if touchCount == 1 {
+            // Single finger touch/tap detection
+            detectSingleFingerGesture(touches: touches)
+        }
+    }
+    
+    private func detect4PlusFingerGesture(touches: Set<NSTouch>, fingerCount: Int) {
+        // Convert touches to our internal format
+        let fingerTouches = touches.map { convertTouchToFingerTouch($0) }
+        
+        // Calculate current centroid (average position) - breaking up complex expressions
+        let positions = fingerTouches.map { $0.position }
+        
+        // Calculate sum of positions - breaking up for better type checking
+        var sumX: CGFloat = 0
+        var sumY: CGFloat = 0
+        for position in positions {
+            sumX += position.x
+            sumY += position.y
+        }
+        
+        // Calculate centroid from the sum
+        let centroid = CGPoint(
+            x: sumX / CGFloat(positions.count),
+            y: sumY / CGFloat(positions.count)
+        )
+        
+        // Get previous centroids if we have them stored
+        if let prevPositions = previousPositions, prevPositions.count == fingerCount {
+            // Calculate previous centroid - breaking up for better type checking
+            var prevSumX: CGFloat = 0
+            var prevSumY: CGFloat = 0
+            for position in prevPositions {
+                prevSumX += position.x
+                prevSumY += position.y
+            }
+            
+            let avgPrevCentroid = CGPoint(
+                x: prevSumX / CGFloat(prevPositions.count),
+                y: prevSumY / CGFloat(prevPositions.count)
+            )
+            
+            // Calculate the movement delta
+            let deltaX = centroid.x - avgPrevCentroid.x
+            let deltaY = centroid.y - avgPrevCentroid.y
+            
+            // Detect swipe direction based on the delta
+            if abs(deltaX) > 0.01 || abs(deltaY) > 0.01 {
+                // Determine swipe direction
+                let isHorizontal = abs(deltaX) > abs(deltaY)
+                let isPositive = isHorizontal ? deltaX > 0 : deltaY > 0
+                
+                var direction: TrackpadGesture.GestureType.SwipeDirection
+                
+                if isHorizontal {
+                    direction = isPositive ? .right : .left
+                } else {
+                    direction = isPositive ? .down : .up
+                }
+                
+                // Create a swipe gesture with the appropriate finger count
+                let magnitude = max(abs(deltaX), abs(deltaY))
+                let gesture = TrackpadGesture(
+                    type: .swipe(direction: direction),
+                    touches: fingerTouches,
+                    magnitude: magnitude,
+                    rotation: nil,
+                    isMomentumScroll: false
+                )
+                
+                // Send the gesture event
+                let inputEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+                
+                DispatchQueue.main.async {
+                    // Remove existing swipe gestures - breaking up complex conditions
+                    self.currentEvents.removeAll { event in
+                        if let gesture = event.trackpadGesture {
+                            if case .swipe = gesture.type {
+                                if gesture.touches.count == fingerCount {
+                                    return true
+                                }
+                            }
+                        }
+                        return false
+                    }
+                    
+                    // Add the new event
+                    self.currentEvents.append(inputEvent)
+                }
+                
+                // Notify delegate about the gesture
+                delegate?.trackpadMonitorDidDetectGesture(gesture)
+                
+                // Log the detection
+                let gestureDescription = "\(fingerCount)-finger swipe detected: \(direction), magnitude: \(magnitude)"
+                Logger.debug(gestureDescription, log: Logger.trackpad)
+            }
+        }
+        
+        // Store current positions for next comparison
+        previousPositions = positions
+    }
+    
+    private func detectSingleFingerGesture(touches: Set<NSTouch>) {
+        guard let touch = touches.first else { return }
+        
+        // Convert to our format
+        let fingerTouch = convertTouchToFingerTouch(touch)
+        
+        // For single finger, we primarily care about taps
+        // Most movement tracking is handled elsewhere for single finger
+        
+        // Create a touch event
+        let touchEvent = InputEvent.trackpadTouchEvent(touches: [fingerTouch])
+        
+        DispatchQueue.main.async {
+            // Update current events
+            self.currentEvents.removeAll { event in
+                if event.type == .trackpadTouch && event.trackpadTouches?.count == 1 {
+                    return true
+                }
+                return false
+            }
+            self.currentEvents.append(touchEvent)
+        }
+        
+        // Notify delegate about touches
+        delegate?.trackpadTouchesBegan(touches: [fingerTouch])
+    }
+    
+    private func detectTwoFingerGesture(touches: Set<NSTouch>) {
+        // Convert touches to our internal format
+        let fingerTouches = touches.map { convertTouchToFingerTouch($0) }
+        
+        // Calculate current positions
+        let positions = fingerTouches.map { $0.position }
+        
+        // Calculate distance between touch points for pinch detection
+        if positions.count == 2 {
+            let distance = hypot(positions[0].x - positions[1].x, positions[0].y - positions[1].y)
+            
+            // Get previous positions if available
+            if let prevPositions = previousPositions, prevPositions.count == 2 {
+                let prevDistance = hypot(prevPositions[0].x - prevPositions[1].x, prevPositions[0].y - prevPositions[1].y)
+                
+                // Calculate deltas
+                let deltaDistance = distance - prevDistance
+                
+                // Calculate movement delta (for scroll detection) - breaking into simpler steps
+                let currentCenterX = (positions[0].x + positions[1].x) / 2
+                let currentCenterY = (positions[0].y + positions[1].y) / 2
+                let prevCenterX = (prevPositions[0].x + prevPositions[1].x) / 2
+                let prevCenterY = (prevPositions[0].y + prevPositions[1].y) / 2
+                
+                let deltaX = currentCenterX - prevCenterX
+                let deltaY = currentCenterY - prevCenterY
+                
+                // Determine gesture type
+                if abs(deltaDistance) > 0.01 {
+                    // Pinch gesture
+                    let gesture = TrackpadGesture(
+                        type: .pinch,
+                        touches: fingerTouches,
+                        magnitude: abs(deltaDistance),
+                        rotation: nil,
+                        isMomentumScroll: false
+                    )
+                    
+                    // Send pinch event
+                    let inputEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+                    DispatchQueue.main.async {
+                        // Update current events - simplified conditional
+                        self.currentEvents.removeAll { event in
+                            if let gesture = event.trackpadGesture {
+                                if case .pinch = gesture.type {
+                                    return true
+                                }
+                            }
+                            return false
+                        }
+                        self.currentEvents.append(inputEvent)
+                    }
+                    
+                    // Notify delegate
+                    delegate?.trackpadMonitorDidDetectGesture(gesture)
+                    
+                } else if abs(deltaX) > 0.01 || abs(deltaY) > 0.01 {
+                    // Swipe - determine direction
+                    var direction: TrackpadGesture.GestureType.SwipeDirection
+                    
+                    if abs(deltaX) > abs(deltaY) {
+                        direction = deltaX > 0 ? .right : .left
+                    } else {
+                        direction = deltaY > 0 ? .down : .up
+                    }
+                    
+                    // Create swipe gesture
+                    let gesture = TrackpadGesture(
+                        type: .swipe(direction: direction),
+                        touches: fingerTouches,
+                        magnitude: max(abs(deltaX), abs(deltaY)),
+                        rotation: nil,
+                        isMomentumScroll: false
+                    )
+                    
+                    // Send swipe event
+                    let inputEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+                    DispatchQueue.main.async {
+                        // Update current events - simplify the complex conditional
+                        self.currentEvents.removeAll { event in
+                            if let gesture = event.trackpadGesture {
+                                if case .swipe = gesture.type {
+                                    return true
+                                }
+                            }
+                            return false
+                        }
+                        self.currentEvents.append(inputEvent)
+                    }
+                    
+                    // Notify delegate
+                    delegate?.trackpadMonitorDidDetectGesture(gesture)
+                    
+                }
+            }
+        }
+        
+        // Store current positions for next comparison
+        previousPositions = positions
+    }
+    
+    private func detect3FingerGesture(touches: Set<NSTouch>) {
+        // Convert touches to our internal format
+        let fingerTouches = touches.map { convertTouchToFingerTouch($0) }
+        
+        // Calculate current centroid (average position) - breaking up complex expressions
+        let positions = fingerTouches.map { $0.position }
+        
+        // Calculate sum of positions - breaking up for better type checking
+        var sumX: CGFloat = 0
+        var sumY: CGFloat = 0
+        for position in positions {
+            sumX += position.x
+            sumY += position.y
+        }
+        
+        // Calculate centroid from the sum
+        let centroid = CGPoint(
+            x: sumX / CGFloat(positions.count),
+            y: sumY / CGFloat(positions.count)
+        )
+        
+        // Get previous centroids if we have them stored
+        if let prevPositions = previousPositions, prevPositions.count == 3 {
+            // Calculate previous centroid - breaking up for better type checking
+            var prevSumX: CGFloat = 0
+            var prevSumY: CGFloat = 0
+            for position in prevPositions {
+                prevSumX += position.x
+                prevSumY += position.y
+            }
+            
+            let avgPrevCentroid = CGPoint(
+                x: prevSumX / CGFloat(prevPositions.count),
+                y: prevSumY / CGFloat(prevPositions.count)
+            )
+            
+            // Calculate the movement delta
+            let deltaX = centroid.x - avgPrevCentroid.x
+            let deltaY = centroid.y - avgPrevCentroid.y
+            
+            // For 3-finger gestures, we're primarily interested in swipes
+            if abs(deltaX) > 0.01 || abs(deltaY) > 0.01 {
+                var direction: TrackpadGesture.GestureType.SwipeDirection
+                
+                if abs(deltaX) > abs(deltaY) {
+                    // Horizontal swipe
+                    direction = deltaX > 0 ? .right : .left
+                } else {
+                    // Vertical swipe
+                    direction = deltaY > 0 ? .down : .up
+                }
+                
+                // Create a swipe gesture
+                let gesture = TrackpadGesture(
+                    type: .swipe(direction: direction),
+                    touches: fingerTouches,
+                    magnitude: max(abs(deltaX), abs(deltaY)),
+                    rotation: nil,
+                    isMomentumScroll: false
+                )
+                
+                // Send the gesture event
+                let inputEvent = InputEvent.trackpadGestureEvent(gesture: gesture)
+                DispatchQueue.main.async {
+                    // Remove any existing 3-finger swipe gestures - breaking up complex conditional
+                    self.currentEvents.removeAll { event in
+                        if let gesture = event.trackpadGesture {
+                            if case .swipe = gesture.type {
+                                if gesture.touches.count == 3 {
+                                    return true
+                                }
+                            }
+                        }
+                        return false
+                    }
+                    self.currentEvents.append(inputEvent)
+                }
+                
+                // Notify delegate about the gesture
+                delegate?.trackpadMonitorDidDetectGesture(gesture)
+                
+                // Log the detection of a 3-finger swipe
+                Logger.debug("3-finger swipe detected: \(direction), magnitude: \(max(abs(deltaX), abs(deltaY)))", log: Logger.trackpad)
+            }
+        }
+        
+        // Store current positions for next comparison
+        previousPositions = positions
     }
 }
 

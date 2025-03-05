@@ -586,13 +586,11 @@ struct KlicApp: App {
     
     private func setupApp() {
         // Configure window appearance with a delay to ensure it's ready
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             appDelegate.configureWindowAppearance()
             
             // Try to setup menu bar again if needed
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                appDelegate.setupMenuBar()
-            }
+            appDelegate.setupMenuBar()
         }
     }
     

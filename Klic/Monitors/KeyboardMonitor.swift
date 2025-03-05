@@ -11,6 +11,12 @@ class KeyboardMonitor: ObservableObject {
     private let eventSubject = PassthroughSubject<InputEvent, Never>()
     private var cancellables = Set<AnyCancellable>()
     
+    // Add tracking properties to prevent duplicate events
+    private var lastProcessedKeyCode: Int = -1
+    private var lastProcessedModifiers: [KeyModifier] = []
+    private var lastProcessedTime: Date = Date.distantPast
+    private let duplicateThreshold: TimeInterval = 0.01 // 10ms threshold to prevent duplicates
+    
     // Map of key codes to character representations
     private let keyCodeMap: [Int: String] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x",
@@ -140,11 +146,27 @@ class KeyboardMonitor: ObservableObject {
         
         let isDown = type == .keyDown
         
-        let inputEvent = InputEvent.keyboardEvent(key: characters, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
+        let currentTime = Date()
         
-        Logger.debug("Keyboard event: \(isDown ? "down" : "up") key=\(characters) modifiers=\(modifiers)", log: Logger.keyboard)
+        // Check for duplicate events
+        let isDuplicate = (keyCode == lastProcessedKeyCode) && 
+                         (modifiers == lastProcessedModifiers) &&
+                         (currentTime.timeIntervalSince(lastProcessedTime) < duplicateThreshold)
         
-        eventSubject.send(inputEvent)
+        if !isDuplicate {
+            let inputEvent = InputEvent.keyboardEvent(key: characters, keyCode: keyCode, isDown: isDown, modifiers: modifiers, characters: characters, isRepeat: isRepeat)
+            
+            Logger.debug("Keyboard event: \(isDown ? "down" : "up") key=\(characters) modifiers=\(modifiers)", log: Logger.keyboard)
+            
+            eventSubject.send(inputEvent)
+            
+            // Update last processed values
+            lastProcessedKeyCode = keyCode
+            lastProcessedModifiers = modifiers
+            lastProcessedTime = currentTime
+        } else {
+            Logger.debug("Ignored duplicate keyboard event for key=\(characters)", log: Logger.keyboard)
+        }
     }
     
     private func keyCodeToString(_ keyCode: Int) -> String {
