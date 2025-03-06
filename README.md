@@ -2,6 +2,9 @@
 
 A sleek, minimal input visualization app that displays keyboard shortcuts, trackpad gestures, and mouse movements in an elegant overlay. Built specifically for streamers, presenters, and educators.
 
+![image](https://github.com/user-attachments/assets/8c0c7e61-75d2-43f4-9ca8-d4df62d8ece9)
+
+
 ## ✨ Features
 
 ### Input Visualization
