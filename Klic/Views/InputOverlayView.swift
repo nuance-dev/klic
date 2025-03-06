@@ -21,10 +21,6 @@ struct InputOverlayView: View {
         inputManager.activeInputTypes.contains(.mouse) && !inputManager.mouseEvents.isEmpty
     }
     
-    private var shouldShowTrackpad: Bool {
-        inputManager.activeInputTypes.contains(.trackpad) && !inputManager.trackpadEvents.isEmpty
-    }
-    
     // Filter to limit keyboard events for better display
     private var filteredKeyboardEvents: [InputEvent] {
         Array(inputManager.keyboardEvents.prefix(maximumVisibleKeyboardEvents))
@@ -35,17 +31,9 @@ struct InputOverlayView: View {
             Spacer()
             
             // Only show container when there are active inputs to display
-            if shouldShowKeyboard || shouldShowMouse || shouldShowTrackpad {
+            if shouldShowKeyboard || shouldShowMouse {
                 HStack(spacing: overlaySpacing) {
                     // Individual visualizers will only show up when needed
-                    
-                    // Trackpad visualizer with elegant transitions
-                    if shouldShowTrackpad {
-                        TrackpadVisualizer(events: inputManager.trackpadEvents)
-                            .frame(height: 65)
-                            .transition(createInsertionTransition())
-                            .id("trackpad-\(inputManager.trackpadEvents.count)")
-                    }
                     
                     // Keyboard visualizer with elegant transitions
                     if shouldShowKeyboard {
@@ -80,10 +68,6 @@ struct InputOverlayView: View {
                 .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 5)
                 .opacity(inputManager.overlayOpacity)
                 .transition(.opacity)
-                .gesture(
-                    inputManager.getTrackpadMonitor().magnifyGesture()
-                        .simultaneously(with: inputManager.getTrackpadMonitor().rotateGesture())
-                )
             }
             
             Spacer().frame(height: 30)
@@ -132,7 +116,7 @@ struct BlurEffectView: NSViewRepresentable {
 
 #Preview {
     let inputManager = InputManager()
-    inputManager.activeInputTypes = [.keyboard, .mouse, .trackpad]
+    inputManager.activeInputTypes = [.keyboard, .mouse]
     return InputOverlayView(inputManager: inputManager)
         .environmentObject(inputManager)
 } 

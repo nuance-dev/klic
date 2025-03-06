@@ -5,7 +5,6 @@ import SwiftUI
 class InputManager: ObservableObject {
     @Published var keyboardEvents: [InputEvent] = []
     @Published var mouseEvents: [InputEvent] = []
-    @Published var trackpadEvents: [InputEvent] = []
     @Published var allEvents: [InputEvent] = []
     
     // Properties to control visibility and active input types
@@ -16,16 +15,13 @@ class InputManager: ObservableObject {
     // Add publishing of input visibility preferences  
     @Published var showKeyboardInput: Bool = true
     @Published var showMouseInput: Bool = true
-    @Published var showTrackpadInput: Bool = true
     
     // Maximum events to keep per input type
     private let maxKeyboardEvents = 6
     private let maxMouseEvents = 3
-    private let maxTrackpadEvents = 2
     
     private let keyboardMonitor = KeyboardMonitor()
     private let mouseMonitor = MouseMonitor()
-    private let trackpadMonitor = TrackpadMonitor()
     private var cancellables = Set<AnyCancellable>()
     
     // Timer for auto-hiding the overlay
@@ -45,7 +41,6 @@ class InputManager: ObservableObject {
     enum InputType: Int, CaseIterable {
         case keyboard
         case mouse
-        case trackpad
     }
     
     // New property for managing user preference vs. actual opacity
@@ -57,7 +52,6 @@ class InputManager: ObservableObject {
         // Initialize visibility preferences from user defaults
         self.showKeyboardInput = UserPreferences.getShowKeyboardInput()
         self.showMouseInput = UserPreferences.getShowMouseInput()
-        self.showTrackpadInput = UserPreferences.getShowTrackpadInput()
         
         setupSubscriptions()
         
@@ -71,7 +65,6 @@ class InputManager: ObservableObject {
             // Update visibility settings from user defaults
             self.showKeyboardInput = UserPreferences.getShowKeyboardInput()
             self.showMouseInput = UserPreferences.getShowMouseInput()
-            self.showTrackpadInput = UserPreferences.getShowTrackpadInput()
             
             // Clear events for disabled input types
             if !self.showKeyboardInput {
@@ -82,11 +75,6 @@ class InputManager: ObservableObject {
             if !self.showMouseInput {
                 self.mouseEvents = []
                 self.updateActiveInputTypes(adding: .mouse, removing: true)
-            }
-            
-            if !self.showTrackpadInput {
-                self.trackpadEvents = []
-                self.updateActiveInputTypes(adding: .trackpad, removing: true)
             }
             
             self.updateAllEvents()
@@ -151,31 +139,6 @@ class InputManager: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-        
-        // Subscribe to trackpad events
-        trackpadMonitor.$currentEvents
-            .receive(on: RunLoop.main)
-            .removeDuplicates()
-            .sink { [weak self] events in
-                guard let self = self else { return }
-                if self.showTrackpadInput && !events.isEmpty {
-                    self.trackpadEvents = Array(events.prefix(self.maxTrackpadEvents))
-                    self.updateActiveInputTypes(adding: .trackpad, removing: events.isEmpty)
-                    self.updateAllEvents()
-                    self.showOverlay()
-                    
-                    // Set a timer to clear this event type
-                    self.scheduleClearEventTimer(for: .trackpad)
-                    
-                    Logger.debug("Received \(events.count) trackpad events", log: Logger.app)
-                } else if !self.showTrackpadInput && !self.trackpadEvents.isEmpty {
-                    // Clear trackpad events if trackpad input is disabled
-                    self.trackpadEvents = []
-                    self.updateActiveInputTypes(adding: .trackpad, removing: true)
-                    self.updateAllEvents()
-                }
-            }
-            .store(in: &cancellables)
     }
     
     // Update the active input types set
@@ -212,12 +175,6 @@ class InputManager: ObservableObject {
                     if !self.mouseEvents.isEmpty {
                         self.mouseEvents = []
                         self.updateActiveInputTypes(adding: .mouse, removing: true)
-                        self.updateAllEvents()
-                    }
-                case .trackpad:
-                    if !self.trackpadEvents.isEmpty {
-                        self.trackpadEvents = []
-                        self.updateActiveInputTypes(adding: .trackpad, removing: true)
                         self.updateAllEvents()
                     }
                 }
@@ -313,7 +270,7 @@ class InputManager: ObservableObject {
     
     // Update the consolidated event list for rendering
     private func updateAllEvents() {
-        allEvents = keyboardEvents + mouseEvents + trackpadEvents
+        allEvents = keyboardEvents + mouseEvents
     }
     
     // Public methods for controlling the overlay
@@ -326,42 +283,16 @@ class InputManager: ObservableObject {
     
     // Start all monitors
     func startMonitoring() {
-        Logger.info("Starting input monitoring", log: Logger.app)
-        
-        // Start keyboard monitoring
+        Logger.info("Starting all input monitors", log: Logger.app)
         keyboardMonitor.startMonitoring()
-        
-        // Start mouse monitoring
         mouseMonitor.startMonitoring()
-        
-        // Start trackpad monitoring
-        trackpadMonitor.startMonitoring()
-        
-        Logger.info("All input monitors started", log: Logger.app)
     }
     
     // Stop all monitors
     func stopMonitoring() {
-        Logger.info("Stopping input monitoring", log: Logger.app)
-        
-        // Stop keyboard monitoring
+        Logger.info("Stopping all input monitors", log: Logger.app)
         keyboardMonitor.stopMonitoring()
-        
-        // Stop mouse monitoring
         mouseMonitor.stopMonitoring()
-        
-        // Stop trackpad monitoring
-        trackpadMonitor.stopMonitoring()
-        
-        // Clear all events
-        clearAllEvents()
-        
-        Logger.info("All input monitors stopped", log: Logger.app)
-    }
-    
-    // Get trackpad monitor for system-wide gesture monitoring
-    func getTrackpadMonitor() -> TrackpadMonitor {
-        return trackpadMonitor
     }
     
     // Update opacity from user preference
@@ -383,73 +314,50 @@ class InputManager: ObservableObject {
         // Clear any existing events
         keyboardEvents = []
         mouseEvents = []
-        trackpadEvents = []
         
         // Create some keyboard demo events
         let cmdKey = KeyboardEvent(
-            id: UUID(),
-            timestamp: Date(),
+            key: "Command",
             keyCode: 55,
-            keyChar: "⌘",
-            isKeyDown: true,
-            isRepeat: false,
-            modifiers: 1 << 20 // Command modifier flag
+            isDown: true,
+            modifiers: [.command],
+            characters: "⌘",
+            isRepeat: false
         )
         
         let shiftKey = KeyboardEvent(
-            id: UUID(),
-            timestamp: Date(),
+            key: "Shift",
             keyCode: 56,
-            keyChar: "⇧",
-            isKeyDown: true,
-            isRepeat: false,
-            modifiers: 1 << 17 // Shift modifier flag
+            isDown: true,
+            modifiers: [.shift],
+            characters: "⇧",
+            isRepeat: false
         )
         
         let sKey = KeyboardEvent(
-            id: UUID(),
-            timestamp: Date(),
+            key: "S",
             keyCode: 1,
-            keyChar: "S",
-            isKeyDown: true,
-            isRepeat: false,
-            modifiers: 0
+            isDown: true,
+            modifiers: [],
+            characters: "S",
+            isRepeat: false
         )
         
         // Create some mouse demo events
         let leftClick = MouseEvent(
-            id: UUID(),
-            timestamp: Date(),
-            type: .leftDown,
             position: CGPoint(x: 400, y: 300),
             button: .left,
-            scrollDelta: CGPoint.zero
+            scrollDelta: nil,
+            isDown: true,
+            isDoubleClick: false
         )
         
         let rightClick = MouseEvent(
-            id: UUID(),
-            timestamp: Date(),
-            type: .rightDown,
             position: CGPoint(x: 500, y: 300),
             button: .right,
-            scrollDelta: CGPoint.zero
-        )
-        
-        // Create some trackpad demo events
-        let magnifyEvent = TrackpadEvent(
-            timestamp: Date(),
-            gestureType: .magnify,
-            value: 1.5,
-            fingerCount: 2, // Two fingers for pinch gesture
-            state: .changed
-        )
-        
-        let rotateEvent = TrackpadEvent(
-            timestamp: Date(),
-            gestureType: .rotate,
-            value: 45.0, // 45 degrees
-            fingerCount: 2, // Two fingers for rotation gesture
-            state: .changed
+            scrollDelta: nil,
+            isDown: true,
+            isDoubleClick: false
         )
         
         // Convert to InputEvent objects and add them to the event arrays
@@ -464,15 +372,9 @@ class InputManager: ObservableObject {
             InputEvent.mouseEvent(event: rightClick)
         ]
         
-        trackpadEvents = [
-            InputEvent.trackpadEvent(event: magnifyEvent),
-            InputEvent.trackpadEvent(event: rotateEvent)
-        ]
-        
         // Update active input types
         activeInputTypes.insert(.keyboard)
         activeInputTypes.insert(.mouse)
-        activeInputTypes.insert(.trackpad)
         
         // Update the all events array
         updateAllEvents()
@@ -482,16 +384,14 @@ class InputManager: ObservableObject {
     }
     
     // Set input type visibility
-    func setInputTypeVisibility(keyboard: Bool, mouse: Bool, trackpad: Bool = true) {
+    func setInputTypeVisibility(keyboard: Bool, mouse: Bool) {
         // Store visibility preferences in UserDefaults
         UserPreferences.setShowKeyboardInput(keyboard)
         UserPreferences.setShowMouseInput(mouse)
-        UserPreferences.setShowTrackpadInput(trackpad)
         
         // Update published properties
         self.showKeyboardInput = keyboard
         self.showMouseInput = mouse
-        self.showTrackpadInput = trackpad
         
         // Update active input types based on visibility settings
         if !keyboard {
@@ -502,11 +402,6 @@ class InputManager: ObservableObject {
         if !mouse {
             activeInputTypes.remove(.mouse)
             mouseEvents = []
-        }
-        
-        if !trackpad {
-            activeInputTypes.remove(.trackpad)
-            trackpadEvents = []
         }
         
         // Update all events
@@ -540,7 +435,6 @@ class InputManager: ObservableObject {
         Logger.info("Clearing all events", log: Logger.app)
         keyboardEvents = []
         mouseEvents = []
-        trackpadEvents = []
         updateAllEvents()
     }
     

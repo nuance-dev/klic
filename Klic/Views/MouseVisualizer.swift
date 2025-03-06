@@ -60,8 +60,7 @@ struct MouseVisualizer: View {
             return .click(button: button, isDoubleClick: isDoubleClick)
         } 
         // Then check for scroll events
-        else if let scrollEvent = latestScrollEvent, let mouseEvent = scrollEvent.mouseEvent {
-            let delta = mouseEvent.scrollDelta
+        else if let scrollEvent = latestScrollEvent, let mouseEvent = scrollEvent.mouseEvent, let delta = mouseEvent.scrollDelta {
             // Determine primary scroll direction
             let direction: ScrollDirection
             if abs(delta.y) > abs(delta.x) {
@@ -553,12 +552,12 @@ struct MouseMoveView: View {
 #Preview {
     // Create test mouse events
     let mouseEvent = MouseEvent(
-        id: UUID(),
-        timestamp: Date(),
-        type: .leftDown,
         position: CGPoint(x: 0.5, y: 0.5),
         button: .left,
-        scrollDelta: CGPoint.zero
+        scrollDelta: nil,
+        isDown: true,
+        isDoubleClick: false,
+        isMomentumScroll: false
     )
     let clickEvent = InputEvent.mouseEvent(event: mouseEvent)
     

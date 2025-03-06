@@ -15,12 +15,6 @@ struct ContentView: View {
             
             // Input visualizers
             VStack(spacing: 12) {
-                // Trackpad visualizer
-                if !inputManager.trackpadEvents.isEmpty {
-                    TrackpadVisualizer(events: inputManager.trackpadEvents)
-                        .padding(.horizontal, isMinimalMode ? 8 : 16)
-                }
-                
                 // Keyboard visualizer
                 if !inputManager.keyboardEvents.isEmpty {
                     KeyboardVisualizer(events: inputManager.keyboardEvents)
@@ -35,7 +29,6 @@ struct ContentView: View {
             }
             .padding(.vertical, 16)
         }
-        // Remove trackpad gesture attachments since we now monitor system-wide
         .onAppear {
             // Start monitoring inputs
             inputManager.startMonitoring()
