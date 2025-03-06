@@ -9,6 +9,7 @@ struct UserPreferences {
     static let minimalDisplayModeKey = "minimalDisplayMode"
     static let showKeyboardInputKey = "showKeyboardInput"
     static let showMouseInputKey = "showMouseInput"
+    static let showTrackpadInputKey = "showTrackpadInput"
     static let autoHideDelayKey = "autoHideDelay"
     
     // Default values
@@ -52,6 +53,17 @@ struct UserPreferences {
         UserDefaults.standard.set(value, forKey: showMouseInputKey)
     }
     
+    // Get trackpad input visibility
+    static func getShowTrackpadInput() -> Bool {
+        let exists = UserDefaults.standard.object(forKey: showTrackpadInputKey) != nil
+        return exists ? UserDefaults.standard.bool(forKey: showTrackpadInputKey) : true
+    }
+    
+    // Set trackpad input visibility
+    static func setShowTrackpadInput(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: showTrackpadInputKey)
+    }
+    
     // MARK: - Auto-Hide Delay
     
     // Get auto-hide delay
@@ -86,6 +98,7 @@ struct UserPreferences {
             minimalDisplayModeKey: false,
             showKeyboardInputKey: true,
             showMouseInputKey: true,
+            showTrackpadInputKey: true,
             autoHideDelayKey: defaultAutoHideDelay
         ])
     }

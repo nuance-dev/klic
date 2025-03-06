@@ -96,4 +96,33 @@ Klic is a modern, minimal input visualization app for macOS that displays keyboa
 1. **Additional style themes**: Add customizable themes for different streaming environments
 2. **Enhanced keyboard shortcut display**: Add special visualization for application-specific shortcuts
 3. **Performance optimizations**: Further optimize CPU/GPU usage for prolonged streaming sessions
-4. **Haptic feedback integration**: Add optional haptic feedback for key input detection 
+4. **Haptic feedback integration**: Add optional haptic feedback for key input detection
+5. **System-wide trackpad gesture detection**: Implement more advanced system-wide detection of trackpad gestures
+
+## Recent Improvements
+
+### 1. Enhanced Trackpad Gesture Detection
+- **System-wide gesture monitoring**: Added support for detecting trackpad gestures anywhere in the system, not just on the app itself
+- **Multi-finger gesture detection**: Implemented estimation of finger count for different gesture types
+- **Expanded gesture types**: Now tracks pinch/zoom, rotation, swipe, and scroll gestures
+- **Visual finger count indicators**: Shows the estimated number of fingers used in each gesture
+- **Modern, consistent visualizers**: Redesigned gesture visualizers to match the premium glass-effect design language
+
+### 2. Previous Improvements
+- **Improved brief overlay display**: The overlay now appears briefly and automatically fades away after input is detected
+- **Smart timing for auto-hide**: Each input type now has its own timer to cleanly fade out after no new inputs are detected
+- **Limited visible inputs**: Reduced the number of simultaneously visible keyboard events (6), mouse events (3), and trackpad events (3) to prevent visual clutter
+- **Fixed menu bar functionality**: Added demo mode with proper examples of keyboard shortcuts, mouse clicks, and trackpad gestures
+- **Modern glass effect**: Implemented a premium dark glass material with subtle inner glow and refined gradients
+- **Dynamic containers**: Containers now only appear when relevant inputs are detected rather than showing all container types at once
+- **Improved visualization aesthetics**: Added subtle shadows and refined the overall look with inspiration from Vercel, Linear, and Arc
+- **Removed info/settings button**: Settings are now only accessible from the menu bar for cleaner visualization
+- **Completely hidden window controls**: Fixed window control visibility by properly hiding title bar and window controls
+- **Improved modifier key handling**: Fixed combination display for keys like Cmd+Shift+R
+- **Enhanced key capsule design**: Updated with a modern look and subtle animations
+- **Proper key event clearing**: Keys now disappear after a brief period rather than staying visible indefinitely
+- **Smart key grouping**: Related key inputs are now grouped together for better visual clarity
+- **Optimized event processing**: Improved filtering of rapid input events to prevent visual clutter
+- **Better event timing**: Added precise timing for event display and removal
+- **Fixed permission handling**: Better detection and handling of accessibility permissions
+- **Improved window management**: Fixed issues with window appearance and controls 

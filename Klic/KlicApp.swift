@@ -186,6 +186,12 @@ final class AppDelegate: NSObject {
             mouseItem.target = self
             inputTypesMenu.addItem(mouseItem)
             
+            // Add toggle for trackpad
+            let trackpadItem = NSMenuItem(title: "Trackpad", action: #selector(toggleTrackpadInput), keyEquivalent: "")
+            trackpadItem.state = UserDefaults.standard.bool(forKey: "showTrackpadInput") ? .on : .off
+            trackpadItem.target = self
+            inputTypesMenu.addItem(trackpadItem)
+            
             // Add the Input Types submenu
             let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
             inputTypesMenuItem.submenu = inputTypesMenu
@@ -282,6 +288,24 @@ final class AppDelegate: NSObject {
                let submenu = inputTypesItem.submenu,
                let mouseItem = submenu.items.first(where: { $0.title == "Mouse" }) {
                 mouseItem.state = !current ? .on : .off
+            }
+        }
+        
+        // Notify of input type change
+        NotificationCenter.default.post(name: NSNotification.Name("InputTypesChanged"), object: nil)
+    }
+    
+    @objc func toggleTrackpadInput() {
+        // Toggle trackpad input visibility
+        let current = UserDefaults.standard.bool(forKey: "showTrackpadInput")
+        UserDefaults.standard.set(!current, forKey: "showTrackpadInput")
+        
+        // Update the menu item state
+        if let menu = statusItem?.menu {
+            if let inputTypesItem = menu.items.first(where: { $0.title == "Input Types" }),
+               let submenu = inputTypesItem.submenu,
+               let trackpadItem = submenu.items.first(where: { $0.title == "Trackpad" }) {
+                trackpadItem.state = !current ? .on : .off
             }
         }
         
@@ -444,10 +468,10 @@ extension NSApplication {
         // The old implementation was causing crashes:
         // return NSApp.windows.count > 0 && NSApp.isActive
         
-        // New safer implementation:
-        // Only check if the app exists and is active, which is safer
-        let windowCount = NSApp.windows.count
-        return windowCount > 0 && NSApplication.shared.isActive
+        // New safer implementation for a menu bar app:
+        // Always return true since the app should remain running even without visible windows
+        // This prevents the app from quitting when the About window is closed
+        return true
     }
 }
 
