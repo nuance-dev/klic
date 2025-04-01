@@ -169,16 +169,36 @@ final class AppDelegate: NSObject {
             // Create the menu
             let menu = NSMenu()
             
-            // Add menu items
-            menu.addItem(NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o"))
-            menu.addItem(NSMenuItem(title: "Show Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d"))
+            // Create menu items with explicit target setting
+            let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
+            showOverlayItem.target = self
+            menu.addItem(showOverlayItem)
+            
+            let showDemoItem = NSMenuItem(title: "Show Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
+            showDemoItem.target = self
+            menu.addItem(showDemoItem)
+            
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
-            menu.addItem(NSMenuItem(title: "Check Permissions...", action: #selector(checkPermissions), keyEquivalent: "p"))
+            
+            let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ",")
+            preferencesItem.target = self
+            menu.addItem(preferencesItem)
+            
+            let permissionsItem = NSMenuItem(title: "Check Permissions...", action: #selector(checkPermissions), keyEquivalent: "p")
+            permissionsItem.target = self
+            menu.addItem(permissionsItem)
+            
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
+            
+            let aboutItem = NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: "")
+            aboutItem.target = self
+            menu.addItem(aboutItem)
+            
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            
+            let quitItem = NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            quitItem.target = NSApp
+            menu.addItem(quitItem)
             
             // Assign the menu to the status item
             newStatusItem.menu = menu

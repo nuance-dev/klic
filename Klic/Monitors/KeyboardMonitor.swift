@@ -111,18 +111,12 @@ class KeyboardMonitor: ObservableObject {
             .store(in: &cancellables)
     }
     
-    func startMonitoring() {
-        Logger.info("Starting keyboard monitoring", log: Logger.keyboard)
-        
-        // If already monitoring, stop first
-        if isMonitoring {
-            stopMonitoring()
-        }
-        
+    // Add the createEventTap method
+    private func createEventTap() -> CFMachPort? {
         // Create an event tap to monitor keyboard events
         let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         
-        guard let eventTap = CGEvent.tapCreate(
+        let eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
@@ -140,24 +134,37 @@ class KeyboardMonitor: ObservableObject {
                 return Unmanaged.passRetained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
+        )
+        
+        if eventTap == nil {
             Logger.error("Failed to create event tap for keyboard monitoring", log: Logger.keyboard)
+        }
+        
+        return eventTap
+    }
+    
+    func startMonitoring() {
+        Logger.debug("Starting keyboard monitoring", log: Logger.keyboard)
+        
+        guard !isMonitoring else {
+            Logger.debug("Keyboard monitoring already active", log: Logger.keyboard)
             return
         }
         
-        self.eventTap = eventTap
-        
-        // Create a run loop source and add it to the main run loop
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        
         isMonitoring = true
-        Logger.info("Keyboard monitoring started", log: Logger.keyboard)
+        eventTap = createEventTap()
         
-        // Send a test event
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.sendTestEvent()
+        if let eventTap = eventTap {
+            Logger.debug("Created keyboard event tap successfully", log: Logger.keyboard)
+            let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+            
+            // Remove the test event sending
+            // sendTestEvent()
+        } else {
+            Logger.error("Failed to create keyboard event tap", log: Logger.keyboard)
+            isMonitoring = false
         }
     }
     
@@ -281,35 +288,6 @@ class KeyboardMonitor: ObservableObject {
     
     private func keyCodeToString(_ keyCode: Int) -> String {
         return keyCodeMap[keyCode] ?? "key\(keyCode)"
-    }
-    
-    private func sendTestEvent() {
-        // Create a synthetic test event
-        let keyboardEvent = KeyboardEvent(
-            key: "Test", 
-            keyCode: 0, 
-            isDown: true, 
-            modifiers: [], 
-            characters: "Test", 
-            isRepeat: false
-        )
-        let testEvent = InputEvent.keyboardEvent(event: keyboardEvent)
-        
-        // Log that we're sending a test event
-        Logger.debug("Sending keyboard test event", log: Logger.keyboard)
-        
-        // Send the test event to our subject
-        eventSubject.send(testEvent)
-        
-        // Remove the test event after a short delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.currentEvents.removeAll { 
-                if let keyEvent = $0.keyboardEvent {
-                    return keyEvent.key == "Test"
-                }
-                return false
-            }
-        }
     }
     
     // Helper function to check if a key is a modifier key

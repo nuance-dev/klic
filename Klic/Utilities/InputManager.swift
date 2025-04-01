@@ -311,12 +311,15 @@ class InputManager: ObservableObject {
     func showDemoMode() {
         Logger.info("Showing demo mode", log: Logger.app)
         
+        // Stop monitoring to prevent real events from interfering
+        stopMonitoring()
+        
         // Clear any existing events
         keyboardEvents = []
         mouseEvents = []
         
-        // Create welcome message using keyboard events
-        let welcomeKey1 = KeyboardEvent(
+        // Create welcome message using keyboard events - now "READY" instead of "WELCOME"
+        let rKey = KeyboardEvent(
             key: "R",
             keyCode: 15,
             isDown: true,
@@ -325,7 +328,7 @@ class InputManager: ObservableObject {
             isRepeat: false
         )
         
-        let welcomeKey2 = KeyboardEvent(
+        let eKey = KeyboardEvent(
             key: "E",
             keyCode: 14,
             isDown: true,
@@ -334,7 +337,7 @@ class InputManager: ObservableObject {
             isRepeat: false
         )
         
-        let welcomeKey3 = KeyboardEvent(
+        let aKey = KeyboardEvent(
             key: "A",
             keyCode: 0,
             isDown: true,
@@ -343,7 +346,7 @@ class InputManager: ObservableObject {
             isRepeat: false
         )
         
-        let welcomeKey4 = KeyboardEvent(
+        let dKey = KeyboardEvent(
             key: "D",
             keyCode: 2,
             isDown: true,
@@ -352,7 +355,7 @@ class InputManager: ObservableObject {
             isRepeat: false
         )
         
-        let welcomeKey5 = KeyboardEvent(
+        let yKey = KeyboardEvent(
             key: "Y",
             keyCode: 16,
             isDown: true,
@@ -406,13 +409,17 @@ class InputManager: ObservableObject {
             isDoubleClick: false
         )
         
-        // Show the welcome message first (now "READY" instead of "WELCOME")
+        // Immediately ensure overlay is visible
+        isOverlayVisible = true
+        showOverlay()
+        
+        // Show the READY message first
         keyboardEvents = [
-            InputEvent.keyboardEvent(event: welcomeKey1),
-            InputEvent.keyboardEvent(event: welcomeKey2),
-            InputEvent.keyboardEvent(event: welcomeKey3),
-            InputEvent.keyboardEvent(event: welcomeKey4),
-            InputEvent.keyboardEvent(event: welcomeKey5)
+            InputEvent.keyboardEvent(event: rKey),
+            InputEvent.keyboardEvent(event: eKey),
+            InputEvent.keyboardEvent(event: aKey),
+            InputEvent.keyboardEvent(event: dKey),
+            InputEvent.keyboardEvent(event: yKey)
         ]
         
         // Update active input types
@@ -421,8 +428,8 @@ class InputManager: ObservableObject {
         // Update the all events array
         updateAllEvents()
         
-        // Show the overlay
-        showOverlay()
+        // Cancel all timers first to ensure demo stays visible
+        cancelAllEventTimers()
         
         // After a delay, show keyboard shortcut
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -444,9 +451,6 @@ class InputManager: ObservableObject {
             self.updateAllEvents()
         }
         
-        // Keep the demo overlay visible longer than usual
-        cancelAllEventTimers()
-        
         // Schedule hiding after a longer delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
             // Clear events gradually
@@ -459,6 +463,9 @@ class InputManager: ObservableObject {
                 self.updateActiveInputTypes(adding: .keyboard, removing: true)
                 self.updateAllEvents()
                 self.hideOverlay()
+                
+                // Restart monitoring after demo is done
+                self.startMonitoring()
             }
         }
     }
