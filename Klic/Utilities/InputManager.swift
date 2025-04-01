@@ -317,11 +317,11 @@ class InputManager: ObservableObject {
         
         // Create welcome message using keyboard events
         let welcomeKey1 = KeyboardEvent(
-            key: "W",
-            keyCode: 13,
+            key: "R",
+            keyCode: 15,
             isDown: true,
             modifiers: [],
-            characters: "W",
+            characters: "R",
             isRepeat: false
         )
         
@@ -335,47 +335,29 @@ class InputManager: ObservableObject {
         )
         
         let welcomeKey3 = KeyboardEvent(
-            key: "L",
-            keyCode: 37,
+            key: "A",
+            keyCode: 0,
             isDown: true,
             modifiers: [],
-            characters: "L",
+            characters: "A",
             isRepeat: false
         )
         
         let welcomeKey4 = KeyboardEvent(
-            key: "C",
-            keyCode: 8,
+            key: "D",
+            keyCode: 2,
             isDown: true,
             modifiers: [],
-            characters: "C",
+            characters: "D",
             isRepeat: false
         )
         
         let welcomeKey5 = KeyboardEvent(
-            key: "O",
-            keyCode: 31,
+            key: "Y",
+            keyCode: 16,
             isDown: true,
             modifiers: [],
-            characters: "O",
-            isRepeat: false
-        )
-        
-        let welcomeKey6 = KeyboardEvent(
-            key: "M",
-            keyCode: 46,
-            isDown: true,
-            modifiers: [],
-            characters: "M",
-            isRepeat: false
-        )
-        
-        let welcomeKey7 = KeyboardEvent(
-            key: "E",
-            keyCode: 14,
-            isDown: true,
-            modifiers: [],
-            characters: "E",
+            characters: "Y",
             isRepeat: false
         )
         
@@ -424,15 +406,13 @@ class InputManager: ObservableObject {
             isDoubleClick: false
         )
         
-        // Show the welcome message first
+        // Show the welcome message first (now "READY" instead of "WELCOME")
         keyboardEvents = [
             InputEvent.keyboardEvent(event: welcomeKey1),
             InputEvent.keyboardEvent(event: welcomeKey2),
             InputEvent.keyboardEvent(event: welcomeKey3),
             InputEvent.keyboardEvent(event: welcomeKey4),
-            InputEvent.keyboardEvent(event: welcomeKey5),
-            InputEvent.keyboardEvent(event: welcomeKey6),
-            InputEvent.keyboardEvent(event: welcomeKey7)
+            InputEvent.keyboardEvent(event: welcomeKey5)
         ]
         
         // Update active input types

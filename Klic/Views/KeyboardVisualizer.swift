@@ -191,21 +191,6 @@ struct KeyboardVisualizer: View {
             }
         }
         
-        // Process modifiers in standard order
-        let orderedModifiers: [KeyModifier] = [.control, .option, .shift, .command]
-        for modifier in orderedModifiers {
-            if activeModifiers.contains(modifier) {
-                switch modifier {
-                case .command: text += "⌘"
-                case .shift: text += "⇧" 
-                case .option: text += "⌥"
-                case .control: text += "⌃"
-                case .function: text += "fn"
-                case .capsLock: text += "⇪"
-                }
-            }
-        }
-        
         // Find the most recent non-modifier key that is DOWN
         // Important: Use timestamp to ensure we get the latest key
         var latestKeyEvent: (event: InputEvent, keyEvent: KeyboardEvent)? = nil
@@ -219,6 +204,35 @@ struct KeyboardVisualizer: View {
                     latestKeyEvent = (event, keyEvent)
                 }
             }
+        }
+        
+        // Check if we have an arrow key
+        let isArrowKey = latestKeyEvent?.keyEvent.keyCode == 123 || // Left arrow
+                        latestKeyEvent?.keyEvent.keyCode == 124 || // Right arrow
+                        latestKeyEvent?.keyEvent.keyCode == 125 || // Down arrow
+                        latestKeyEvent?.keyEvent.keyCode == 126    // Up arrow
+        
+        // Only show function key if it's not an arrow key or if there are other modifiers besides function
+        let showFnKey = !isArrowKey || (activeModifiers.count > 1 && activeModifiers.contains(.function))
+        
+        // Process modifiers in standard order
+        let orderedModifiers: [KeyModifier] = [.control, .option, .shift, .command]
+        for modifier in orderedModifiers {
+            if activeModifiers.contains(modifier) {
+                switch modifier {
+                case .command: text += "⌘"
+                case .shift: text += "⇧" 
+                case .option: text += "⌥"
+                case .control: text += "⌃"
+                case .function: continue // Handle function key separately
+                case .capsLock: text += "⇪"
+                }
+            }
+        }
+        
+        // Add function key if needed
+        if showFnKey && activeModifiers.contains(.function) {
+            text += "fn"
         }
         
         // If we found a non-modifier key, add it
@@ -304,6 +318,17 @@ struct ShortcutVisualizer: View {
             }
         }
         
+        // Check if we're dealing with arrow keys
+        let hasArrowKey = regularKeys.contains { key in
+            key.keyCode == 123 || // Left arrow
+            key.keyCode == 124 || // Right arrow
+            key.keyCode == 125 || // Down arrow
+            key.keyCode == 126    // Up arrow
+        }
+        
+        // Only show function key if not arrow key or if there are other modifiers besides function
+        let showFnKey = !hasArrowKey || (allModifiers.count > 1 && allModifiers.contains(.function))
+        
         // Sort modifiers in the standard order: Ctrl, Option, Shift, Command
         let sortedModifiers = allModifiers.sorted { (a, b) -> Bool in
             let order: [KeyModifier] = [.control, .option, .shift, .command]
@@ -312,14 +337,23 @@ struct ShortcutVisualizer: View {
         
         // Add the modifiers in sorted order
         for modifier in sortedModifiers {
+            if modifier == .function {
+                continue // Skip function key here
+            }
+            
             switch modifier {
             case .command: text += "⌘"
             case .shift: text += "⇧"
             case .option: text += "⌥"
             case .control: text += "⌃"
-            case .function: text += "fn"
+            case .function: break // Handled separately
             case .capsLock: text += "⇪"
             }
+        }
+        
+        // Add function key if needed
+        if showFnKey && allModifiers.contains(.function) {
+            text += "fn"
         }
         
         // Add regular keys

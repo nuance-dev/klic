@@ -21,7 +21,7 @@ final class AppDelegate: NSObject {
     }
     
     // Flag to track if this is the first launch
-    private var isFirstLaunch = true
+    internal var isFirstLaunch = true
     
     // Notification observers
     private var becomeKeyObserver: NSObjectProtocol?

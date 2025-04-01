@@ -183,12 +183,23 @@ class KeyboardMonitor: ObservableObject {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
         
+        // Check if this is an arrow key
+        let isArrowKey = keyCode == 123 || // Left arrow
+                         keyCode == 124 || // Right arrow
+                         keyCode == 125 || // Up arrow
+                         keyCode == 126    // Down arrow
+        
         var modifiers: [KeyModifier] = []
         if flags.contains(.maskCommand) { modifiers.append(.command) }
         if flags.contains(.maskShift) { modifiers.append(.shift) }
         if flags.contains(.maskAlternate) { modifiers.append(.option) }
         if flags.contains(.maskControl) { modifiers.append(.control) }
-        if flags.contains(.maskSecondaryFn) { modifiers.append(.function) }
+        
+        // Only add function modifier if it's not an arrow key or there are other modifiers
+        if flags.contains(.maskSecondaryFn) && (!isArrowKey || modifiers.count > 0) { 
+            modifiers.append(.function) 
+        }
+        
         if flags.contains(.maskAlphaShift) { modifiers.append(.capsLock) }
         
         // Get proper characters with modifiers applied
