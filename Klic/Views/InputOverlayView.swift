@@ -1,5 +1,23 @@
 import SwiftUI
 
+// Add a transparent NSView layer that ignores mouse events
+struct MouseEventPassthrough: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        
+        // Make the view pass-through for mouse events
+        view.alphaValue = 0.0
+        
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Nothing to update
+    }
+}
+
 struct InputOverlayView: View {
     @ObservedObject var inputManager: InputManager
     
@@ -27,53 +45,61 @@ struct InputOverlayView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        ZStack {
+            // Add transparent layer that ignores mouse events
+            MouseEventPassthrough()
+                .allowsHitTesting(false)
             
-            // Only show container when there are active inputs to display
-            if shouldShowKeyboard || shouldShowMouse {
-                HStack(spacing: overlaySpacing) {
-                    // Individual visualizers will only show up when needed
-                    
-                    // Keyboard visualizer with elegant transitions
-                    if shouldShowKeyboard {
-                        KeyboardVisualizer(events: filteredKeyboardEvents)
-                            .frame(height: 65)
-                            .transition(createInsertionTransition())
-                            .id("keyboard-\(inputManager.keyboardEvents.count)")
-                    }
-                    
-                    // Mouse visualizer
-                    if shouldShowMouse {
-                        MouseVisualizer(events: inputManager.mouseEvents)
-                            .frame(width: 100, height: 65)
-                            .transition(createInsertionTransition())
-                            .id("mouse-\(inputManager.mouseEvents.count)")
-                    }
-                }
-                .padding(containerPadding)
-                .background(
-                    ZStack {
-                        // Premium glass effect
-                        RoundedRectangle(cornerRadius: containerRadius)
-                            .fill(.ultraThinMaterial)
-                            .opacity(0.9)
+            VStack(spacing: 0) {
+                Spacer()
+                
+                // Only show container when there are active inputs to display
+                if shouldShowKeyboard || shouldShowMouse {
+                    HStack(spacing: overlaySpacing) {
+                        // Individual visualizers will only show up when needed
                         
-                        // Subtle inner glow
-                        RoundedRectangle(cornerRadius: containerRadius)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                        // Keyboard visualizer with elegant transitions
+                        if shouldShowKeyboard {
+                            KeyboardVisualizer(events: filteredKeyboardEvents)
+                                .frame(height: 65)
+                                .transition(createInsertionTransition())
+                                .id("keyboard-\(inputManager.keyboardEvents.count)")
+                        }
+                        
+                        // Mouse visualizer
+                        if shouldShowMouse {
+                            MouseVisualizer(events: inputManager.mouseEvents)
+                                .frame(width: 100, height: 65)
+                                .transition(createInsertionTransition())
+                                .id("mouse-\(inputManager.mouseEvents.count)")
+                        }
                     }
-                )
-                .cornerRadius(containerRadius)
-                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 5)
-                .opacity(inputManager.overlayOpacity)
-                .transition(.opacity)
+                    .padding(containerPadding)
+                    .background(
+                        ZStack {
+                            // Premium glass effect
+                            RoundedRectangle(cornerRadius: containerRadius)
+                                .fill(.ultraThinMaterial)
+                                .opacity(0.9)
+                            
+                            // Subtle inner glow
+                            RoundedRectangle(cornerRadius: containerRadius)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                        }
+                    )
+                    .cornerRadius(containerRadius)
+                    .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 5)
+                    .opacity(inputManager.overlayOpacity)
+                    .transition(.opacity)
+                    .allowsHitTesting(false) // Disable hit testing for the container
+                }
+                
+                Spacer().frame(height: 30)
             }
-            
-            Spacer().frame(height: 30)
         }
         .edgesIgnoringSafeArea(.all)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false) // Disable hit testing for the entire view
     }
     
     // Create a more elegant insertion transition

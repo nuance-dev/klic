@@ -378,7 +378,26 @@ class MouseMonitor: ObservableObject {
                 let inputEvent = InputEvent.mouseEvent(event: mouseEvent)
                 
                 DispatchQueue.main.async {
+                    // Remove all existing scroll events before adding the new one
+                    self.currentEvents.removeAll { event in
+                        guard event.type == .mouse, 
+                              let mouseEvent = event.mouseEvent else {
+                            return false
+                        }
+                        return mouseEvent.scrollDelta != nil
+                    }
                     self.currentEvents.append(inputEvent)
+                    
+                    // Schedule removal of this scroll event after a delay
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        self.currentEvents.removeAll { event in
+                            guard event.type == .mouse,
+                                  let mouseEvent = event.mouseEvent else {
+                                return false
+                            }
+                            return mouseEvent.scrollDelta != nil
+                        }
+                    }
                 }
                 
                 Logger.debug("Mouse scrolled with delta (\(deltaX), \(deltaY)), momentum: \(isMomentum)", log: Logger.mouse)

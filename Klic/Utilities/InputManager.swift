@@ -173,6 +173,13 @@ class InputManager: ObservableObject {
                     }
                 case .mouse:
                     if !self.mouseEvents.isEmpty {
+                        // First clear scroll events immediately as they can persist
+                        self.mouseEvents.removeAll { event in
+                            guard let mouseEvent = event.mouseEvent else { return false }
+                            return mouseEvent.scrollDelta != nil
+                        }
+                        
+                        // Then clear all remaining mouse events
                         self.mouseEvents = []
                         self.updateActiveInputTypes(adding: .mouse, removing: true)
                         self.updateAllEvents()
@@ -542,6 +549,97 @@ class InputManager: ObservableObject {
     func showDemoInputs() {
         Logger.info("Showing demo inputs", log: Logger.app)
         showDemoMode()
+    }
+    
+    // Show only READY text for first launch
+    func showReadyDemo() {
+        Logger.info("Showing simple READY demo", log: Logger.app)
+        
+        // Stop monitoring to prevent real events from interfering
+        stopMonitoring()
+        
+        // Clear any existing events
+        keyboardEvents = []
+        mouseEvents = []
+        
+        // Create welcome message using keyboard events - just "READY"
+        let rKey = KeyboardEvent(
+            key: "R",
+            keyCode: 15,
+            isDown: true,
+            modifiers: [],
+            characters: "R",
+            isRepeat: false
+        )
+        
+        let eKey = KeyboardEvent(
+            key: "E",
+            keyCode: 14,
+            isDown: true,
+            modifiers: [],
+            characters: "E",
+            isRepeat: false
+        )
+        
+        let aKey = KeyboardEvent(
+            key: "A",
+            keyCode: 0,
+            isDown: true,
+            modifiers: [],
+            characters: "A",
+            isRepeat: false
+        )
+        
+        let dKey = KeyboardEvent(
+            key: "D",
+            keyCode: 2,
+            isDown: true,
+            modifiers: [],
+            characters: "D",
+            isRepeat: false
+        )
+        
+        let yKey = KeyboardEvent(
+            key: "Y",
+            keyCode: 16,
+            isDown: true,
+            modifiers: [],
+            characters: "Y",
+            isRepeat: false
+        )
+        
+        // Immediately ensure overlay is visible
+        isOverlayVisible = true
+        showOverlay()
+        
+        // Show the READY message
+        keyboardEvents = [
+            InputEvent.keyboardEvent(event: rKey),
+            InputEvent.keyboardEvent(event: eKey),
+            InputEvent.keyboardEvent(event: aKey),
+            InputEvent.keyboardEvent(event: dKey),
+            InputEvent.keyboardEvent(event: yKey)
+        ]
+        
+        // Update active input types
+        activeInputTypes.insert(.keyboard)
+        
+        // Update the all events array
+        updateAllEvents()
+        
+        // Cancel all timers first to ensure demo stays visible
+        cancelAllEventTimers()
+        
+        // Schedule hiding after a delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            self.keyboardEvents = []
+            self.updateActiveInputTypes(adding: .keyboard, removing: true)
+            self.updateAllEvents()
+            self.hideOverlay()
+            
+            // Restart monitoring after demo is done
+            self.startMonitoring()
+        }
     }
     
     // Set the opacity preference

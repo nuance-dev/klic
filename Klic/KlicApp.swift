@@ -319,9 +319,8 @@ final class AppDelegate: NSObject {
             window.backgroundColor = NSColor.clear.withAlphaComponent(0)
             window.hasShadow = false
             
-            // Initially allow mouse events to be received for a better user experience
-            // We'll make it pass-through after showing the first overlay
-            window.ignoresMouseEvents = false
+            // Always ignore mouse events to prevent overlay interfering with user interactions
+            window.ignoresMouseEvents = true
             
             // Position at bottom center (fixed position)
             if let screen = NSScreen.main {
@@ -442,7 +441,7 @@ final class AppDelegate: NSObject {
                 window.orderFront(nil)
                 self.configureWindowAppearance()
                 
-                // Now that user has interacted with menu, make window ignore mouse events
+                // Ensure window ignores mouse events
                 window.ignoresMouseEvents = true
                 
                 // Ensure all input monitors are running
@@ -458,8 +457,13 @@ final class AppDelegate: NSObject {
                 // Clear any existing events before demo
                 InputManager.shared.clearAllEvents()
                 
-                // Create test events for demonstration
-                InputManager.shared.showDemoInputs()
+                // Create test events for demonstration - but skip if it's a first launch
+                if !self.isFirstLaunch {
+                    InputManager.shared.showDemoInputs()
+                } else {
+                    // For first launch, only show READY
+                    InputManager.shared.showReadyDemo()
+                }
             }
         }
     }
@@ -554,7 +558,12 @@ struct KlicApp: App {
             if appDelegate?.isFirstLaunch == true {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     appDelegate?.showOverlayFromMenu()
-                    appDelegate?.checkPermissions()
+                    // Only check permissions if not already granted
+                    let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false]
+                    let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
+                    if !accessEnabled {
+                        appDelegate?.checkPermissions()
+                    }
                     appDelegate?.isFirstLaunch = false
                 }
             }
