@@ -315,7 +315,71 @@ class InputManager: ObservableObject {
         keyboardEvents = []
         mouseEvents = []
         
-        // Create some keyboard demo events
+        // Create welcome message using keyboard events
+        let welcomeKey1 = KeyboardEvent(
+            key: "W",
+            keyCode: 13,
+            isDown: true,
+            modifiers: [],
+            characters: "W",
+            isRepeat: false
+        )
+        
+        let welcomeKey2 = KeyboardEvent(
+            key: "E",
+            keyCode: 14,
+            isDown: true,
+            modifiers: [],
+            characters: "E",
+            isRepeat: false
+        )
+        
+        let welcomeKey3 = KeyboardEvent(
+            key: "L",
+            keyCode: 37,
+            isDown: true,
+            modifiers: [],
+            characters: "L",
+            isRepeat: false
+        )
+        
+        let welcomeKey4 = KeyboardEvent(
+            key: "C",
+            keyCode: 8,
+            isDown: true,
+            modifiers: [],
+            characters: "C",
+            isRepeat: false
+        )
+        
+        let welcomeKey5 = KeyboardEvent(
+            key: "O",
+            keyCode: 31,
+            isDown: true,
+            modifiers: [],
+            characters: "O",
+            isRepeat: false
+        )
+        
+        let welcomeKey6 = KeyboardEvent(
+            key: "M",
+            keyCode: 46,
+            isDown: true,
+            modifiers: [],
+            characters: "M",
+            isRepeat: false
+        )
+        
+        let welcomeKey7 = KeyboardEvent(
+            key: "E",
+            keyCode: 14,
+            isDown: true,
+            modifiers: [],
+            characters: "E",
+            isRepeat: false
+        )
+        
+        // Create a keyboard shortcut demo
         let cmdKey = KeyboardEvent(
             key: "Command",
             keyCode: 55,
@@ -338,7 +402,7 @@ class InputManager: ObservableObject {
             key: "S",
             keyCode: 1,
             isDown: true,
-            modifiers: [],
+            modifiers: [.command, .shift],
             characters: "S",
             isRepeat: false
         )
@@ -360,27 +424,76 @@ class InputManager: ObservableObject {
             isDoubleClick: false
         )
         
-        // Convert to InputEvent objects and add them to the event arrays
+        // Show the welcome message first
         keyboardEvents = [
-            InputEvent.keyboardEvent(event: cmdKey),
-            InputEvent.keyboardEvent(event: shiftKey),
-            InputEvent.keyboardEvent(event: sKey)
-        ]
-        
-        mouseEvents = [
-            InputEvent.mouseEvent(event: leftClick),
-            InputEvent.mouseEvent(event: rightClick)
+            InputEvent.keyboardEvent(event: welcomeKey1),
+            InputEvent.keyboardEvent(event: welcomeKey2),
+            InputEvent.keyboardEvent(event: welcomeKey3),
+            InputEvent.keyboardEvent(event: welcomeKey4),
+            InputEvent.keyboardEvent(event: welcomeKey5),
+            InputEvent.keyboardEvent(event: welcomeKey6),
+            InputEvent.keyboardEvent(event: welcomeKey7)
         ]
         
         // Update active input types
         activeInputTypes.insert(.keyboard)
-        activeInputTypes.insert(.mouse)
         
         // Update the all events array
         updateAllEvents()
         
         // Show the overlay
         showOverlay()
+        
+        // After a delay, show keyboard shortcut
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.keyboardEvents = [
+                InputEvent.keyboardEvent(event: cmdKey),
+                InputEvent.keyboardEvent(event: shiftKey),
+                InputEvent.keyboardEvent(event: sKey)
+            ]
+            self.updateAllEvents()
+        }
+        
+        // After another delay, show mouse events
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            self.mouseEvents = [
+                InputEvent.mouseEvent(event: leftClick),
+                InputEvent.mouseEvent(event: rightClick)
+            ]
+            self.activeInputTypes.insert(.mouse)
+            self.updateAllEvents()
+        }
+        
+        // Keep the demo overlay visible longer than usual
+        cancelAllEventTimers()
+        
+        // Schedule hiding after a longer delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+            // Clear events gradually
+            self.mouseEvents = []
+            self.updateActiveInputTypes(adding: .mouse, removing: true)
+            self.updateAllEvents()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.keyboardEvents = []
+                self.updateActiveInputTypes(adding: .keyboard, removing: true)
+                self.updateAllEvents()
+                self.hideOverlay()
+            }
+        }
+    }
+    
+    // Cancel all event timers to prevent premature hiding
+    private func cancelAllEventTimers() {
+        for (_, timer) in eventTimers {
+            timer.invalidate()
+        }
+        eventTimers.removeAll()
+        
+        if let visibilityTimer = visibilityTimer {
+            visibilityTimer.invalidate()
+            self.visibilityTimer = nil
+        }
     }
     
     // Set input type visibility

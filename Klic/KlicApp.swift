@@ -20,6 +20,9 @@ final class AppDelegate: NSObject {
         return _statusItem
     }
     
+    // Flag to track if this is the first launch
+    private var isFirstLaunch = true
+    
     // Notification observers
     private var becomeKeyObserver: NSObjectProtocol?
     private var resizeObserver: NSObjectProtocol?
@@ -82,6 +85,15 @@ final class AppDelegate: NSObject {
                 if self?._statusItem == nil {
                     Logger.warning("Status bar not set up after initial attempts, trying again", log: Logger.app)
                     self?.setupMenuBar()
+                }
+                
+                // Show welcome demo after a short delay to help users get started
+                if self?.isFirstLaunch == true {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.showOverlayFromMenu()
+                        self?.checkPermissions()
+                        self?.isFirstLaunch = false
+                    }
                 }
             }
         }
@@ -157,58 +169,16 @@ final class AppDelegate: NSObject {
             // Create the menu
             let menu = NSMenu()
             
-            // Add "Show Overlay Demo" item that shows example inputs
-            let showDemoItem = NSMenuItem(title: "Show Overlay Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d")
-            showDemoItem.keyEquivalentModifierMask = [.command, .option]
-            showDemoItem.target = self
-            menu.addItem(showDemoItem)
-            
-            // Add "Show Overlay" item that just makes the overlay visible briefly
-            let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o")
-            showOverlayItem.keyEquivalentModifierMask = [.command]
-            showOverlayItem.target = self
-            menu.addItem(showOverlayItem)
-            
+            // Add menu items
+            menu.addItem(NSMenuItem(title: "Show Overlay", action: #selector(menuShowOverlay), keyEquivalent: "o"))
+            menu.addItem(NSMenuItem(title: "Show Demo", action: #selector(menuShowOverlayDemo), keyEquivalent: "d"))
             menu.addItem(NSMenuItem.separator())
-            
-            // Input Type Submenu
-            let inputTypesMenu = NSMenu()
-            
-            // Add toggle for keyboard
-            let keyboardItem = NSMenuItem(title: "Keyboard", action: #selector(toggleKeyboardInput), keyEquivalent: "")
-            keyboardItem.state = UserDefaults.standard.bool(forKey: "showKeyboardInput") ? .on : .off
-            keyboardItem.target = self
-            inputTypesMenu.addItem(keyboardItem)
-            
-            // Add toggle for mouse
-            let mouseItem = NSMenuItem(title: "Mouse", action: #selector(toggleMouseInput), keyEquivalent: "")
-            mouseItem.state = UserDefaults.standard.bool(forKey: "showMouseInput") ? .on : .off
-            mouseItem.target = self
-            inputTypesMenu.addItem(mouseItem)
-            
-            // Add the Input Types submenu
-            let inputTypesMenuItem = NSMenuItem(title: "Input Types", action: nil, keyEquivalent: "")
-            inputTypesMenuItem.submenu = inputTypesMenu
-            menu.addItem(inputTypesMenuItem)
-            
-            // Add preferences item
-            let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ",")
-            preferencesItem.target = self
-            menu.addItem(preferencesItem)
-            
+            menu.addItem(NSMenuItem(title: "Preferences...", action: #selector(menuShowPreferences), keyEquivalent: ","))
+            menu.addItem(NSMenuItem(title: "Check Permissions...", action: #selector(checkPermissions), keyEquivalent: "p"))
             menu.addItem(NSMenuItem.separator())
-            
-            // Add "About Klic" item
-            let aboutItem = NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: "")
-            aboutItem.target = self
-            menu.addItem(aboutItem)
-            
+            menu.addItem(NSMenuItem(title: "About Klic", action: #selector(showAbout), keyEquivalent: ""))
             menu.addItem(NSMenuItem.separator())
-            
-            // Add quit item
-            let quitItem = NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-            quitItem.target = NSApp
-            menu.addItem(quitItem)
+            menu.addItem(NSMenuItem(title: "Quit Klic", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
             
             // Assign the menu to the status item
             newStatusItem.menu = menu
@@ -253,6 +223,36 @@ final class AppDelegate: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
     
+    @objc func checkPermissions() {
+        // Check if we can monitor keyboard events - this will prompt for accessibility permissions if needed
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
+        let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        
+        if !accessEnabled {
+            // Show a dialog with instructions
+            let alert = NSAlert()
+            alert.messageText = "Accessibility Permissions Required"
+            alert.informativeText = "Klic needs accessibility permissions to monitor keyboard and mouse inputs. Please go to System Preferences > Security & Privacy > Privacy > Accessibility and add Klic to the list of allowed apps."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open System Preferences")
+            alert.addButton(withTitle: "Later")
+            
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                // Open System Preferences to the Accessibility section
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            }
+        } else {
+            // Show success message
+            let alert = NSAlert()
+            alert.messageText = "Permissions Granted"
+            alert.informativeText = "Klic has the necessary permissions to monitor keyboard and mouse inputs."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+    
     @objc func toggleKeyboardInput() {
         // Toggle keyboard input visibility
         let current = UserDefaults.standard.bool(forKey: "showKeyboardInput")
@@ -294,13 +294,14 @@ final class AppDelegate: NSObject {
             // Make window float above other windows
             window.level = .floating
             
-            // Make window transparent and non-interactive
+            // Make window transparent but not completely invisible initially
             window.isOpaque = false
             window.backgroundColor = NSColor.clear.withAlphaComponent(0)
             window.hasShadow = false
             
-            // Ensure mouse events pass through the window
-            window.ignoresMouseEvents = true
+            // Initially allow mouse events to be received for a better user experience
+            // We'll make it pass-through after showing the first overlay
+            window.ignoresMouseEvents = false
             
             // Position at bottom center (fixed position)
             if let screen = NSScreen.main {
@@ -320,6 +321,9 @@ final class AppDelegate: NSObject {
                     contentView.layer?.cornerRadius = 0
                 }
             }
+            
+            // Make window visible
+            window.orderFront(nil)
             
             // Completely hide the title bar and window controls
             window.styleMask = [.borderless, .fullSizeContentView]
@@ -417,6 +421,9 @@ final class AppDelegate: NSObject {
             if let window = NSApplication.shared.windows.first {
                 window.orderFront(nil)
                 self.configureWindowAppearance()
+                
+                // Now that user has interacted with menu, make window ignore mouse events
+                window.ignoresMouseEvents = true
                 
                 // Ensure all input monitors are running
                 if !InputManager.shared.checkMonitoringStatus() {
@@ -522,6 +529,15 @@ struct KlicApp: App {
             
             // Try to setup menu bar again if needed
             appDelegate?.setupMenuBar()
+            
+            // Show overlay and check permissions on first launch
+            if appDelegate?.isFirstLaunch == true {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    appDelegate?.showOverlayFromMenu()
+                    appDelegate?.checkPermissions()
+                    appDelegate?.isFirstLaunch = false
+                }
+            }
         }
         
         // Make another attempt after a longer delay
