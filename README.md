@@ -14,6 +14,9 @@ A sleek, minimal input visualization app that displays keyboard shortcuts, track
 - **Mouse**: Cursor movement trails, click visualization, and scroll wheel actions
 - **Shortcuts**: Special highlighting for keyboard shortcuts with connecting animations
 
+![Screenshot 2025-03-31 at 21 47 57](https://github.com/user-attachments/assets/ea7fc9ce-80b1-4071-9d6e-2de79f170ab2)
+
+
 ### Core Features
 
 - **Intelligent Display**: Overlays appear only when inputs are detected and fade away automatically
