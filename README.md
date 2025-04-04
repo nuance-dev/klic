@@ -10,7 +10,7 @@ A sleek, minimal input visualization app that displays keyboard shortcuts, track
 ### Input Visualization
 
 - **Keyboard**: Real-time display of key presses with elegant animations for modifiers and combinations
-- **Trackpad**: Multi-touch visualization showing finger positions, gestures, and pressure sensitivity
+- **Trackpad (WIP)**: Multi-touch visualization showing finger positions, gestures, and pressure sensitivity
 - **Mouse**: Cursor movement trails, click visualization, and scroll wheel actions
 - **Shortcuts**: Special highlighting for keyboard shortcuts with connecting animations
 
@@ -23,7 +23,7 @@ A sleek, minimal input visualization app that displays keyboard shortcuts, track
 - **Next-Gen Design**: Premium glass effect with subtle gradients inspired by Vercel, Linear, and Arc
 - **Minimal Footprint**: Low CPU/GPU usage for seamless streaming and recording
 - **Smart Positioning**: Elegant overlay that never gets in the way of your content
-- **Gesture Recognition**: Advanced visualization for swipes, pinches, rotations, and multi-finger gestures
+- **Gesture Recognition (WIP)**: Advanced visualization for swipes, pinches, rotations, and multi-finger gestures
 - **Momentum Detection**: Special indicators for momentum scrolling and inertia events
 - **Batch Input Handling**: Intelligent grouping of rapid inputs to prevent visual clutter
 - **Dark Mode**: Seamless integration with macOS appearance settings
